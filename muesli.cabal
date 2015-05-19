@@ -19,8 +19,17 @@ extra-source-files:  README.md
 
 library
   exposed-modules:
+    Database.Muesli.Types,
+    Database.Muesli.Handle,
+    Database.Muesli.Transaction,
+    Database.Muesli.Internal,
+    Database.Muesli.IdSupply,
+    Database.Muesli.Allocator,
     Database.Muesli.Cache,
-    Database.Muesli.DocDB
+    Database.Muesli.Indexes,
+    Database.Muesli.Commit,
+    Database.Muesli.GC,
+    Database.Muesli.Utils
   build-depends:
     base >=4.8,
     mtl,
