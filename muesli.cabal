@@ -1,0 +1,36 @@
+name:                muesli
+category:            Database
+version:             0.1.0.0
+synopsis:            Document-oriented MVCC database engine
+description:
+  An easy to use MVCC document-oriented database engine
+  featuring automatic index management and minimal boilerplate.
+homepage:            https://github.com/clnx/muesli
+bug-reports:         https://github.com/clnx/muesli/issues
+author:              Călin Ardelean
+maintainer:          Călin Ardelean <calinucs@gmail.com>
+copyright:           Copyright (C) 2015 Călin Ardelean
+license:             MIT
+license-file:        LICENSE
+stability:           experimental
+build-type:          Simple
+cabal-version:       >=1.10
+extra-source-files:  README.md
+
+library
+  exposed-modules:
+    Database.Muesli.Cache,
+    Database.Muesli.DocDB
+  build-depends:
+    base >=4.8,
+    mtl,
+    time,
+    containers,
+    psqueues,
+    bytestring,
+    cereal,
+    hashable,
+    filepath,
+    directory
+  hs-source-dirs:      src
+  default-language:    Haskell2010
