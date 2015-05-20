@@ -12,7 +12,8 @@
 ----------------------------------------------------------------------------
 
 module Database.Muesli.Handle
-  ( Handle
+  ( module Database.Muesli.Types
+  , Handle
   , open
   , close
   , performGC

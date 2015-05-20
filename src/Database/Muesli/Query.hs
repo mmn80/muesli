@@ -14,7 +14,8 @@
 ----------------------------------------------------------------------------
 
 module Database.Muesli.Query
-  ( Transaction
+  ( module Database.Muesli.Types
+  , Transaction
   , TransactionAbort (..)
   , runQuery
   , lookup
