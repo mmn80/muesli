@@ -6,21 +6,21 @@ engine for Haskell.
 
 Use cases
 ---------
-* higher performance replacement for `acid-state`.
+* higher capacity replacement for `acid-state`.
 * "no external dependency" replacement for `SQLite` and the like.
 * store for cloud/p2p nodes, mobile apps, etc.
 
 Features
 --------
 * ACID transactions implemented on the [MVCC](https://en.wikipedia.org/wiki/Multiversion_concurrency_control) model.
-* automatic index management based on tags added to your fields' types
+* automatic index management based on tags added to fields' types
 (see example below).
 * no `TemplateHaskell`, all boilerplate internally generated with
-`GHC.Generics` and the new `deriving`.
+`GHC.Generics` and `deriving`.
 * only `Prelude` functions for file I/O, no dependencies on C libraries
 (mmap, kv stores, etc.)
-* simple monad for writing queries, with standard primitive operations:
-`lookup`, `insert`, `update`, `delete`, `range` and `filter`.
+* simple monad for writing queries, with standard primitive operations like:
+`lookup`, `insert`, `update`, `delete`, `range`, `filter`.
 * most general type of query supported by the primitive ops (`filter`):
 ```SQL
 SELECT TOP p * FROM t WHERE c = k AND o < s ORDER BY o DESC
@@ -28,15 +28,16 @@ SELECT TOP p * FROM t WHERE c = k AND o < s ORDER BY o DESC
 * easy to reason about performance: all primitive queries run in **O(log n)**.
 * type-safety: impossible to attempt deserializing record at wrong type
 (or address), and risk getting bogus data with no error thrown.
-IDs are tagged with a phantom type and given to you by the polymorphic primitives.
-There are also `Num`/`Integral` instances to support more generic database apps,
-but normally you don't need to use those.
+IDs are tagged with a phantom type and created only by the database.
+There are also `Num`/`Integral` instances to support more generic apps,
+but normally those are not needed.
 
 Example use
 -----------
-First, mark up your types. You must use the record syntax to name your
-accessors so you can query later. You can filter on `DocID` and `Unique`
-fields, and sort on `Indexable`. The database will extract these keys,
+First, mark up your types. You must use the record syntax to name the
+accessors so they'll be queryable. You can filter on `DocID` fields, sort on
+`Indexable`s, and lookup-by-key `Unique`s. The database will extract these keys
+using the `DBValue` and `Document` instances with the help of `GHC.Generics`,
 including from deep inside any `Foldable`.
 
 ```Haskell
@@ -67,14 +68,16 @@ data BlogPost = BlogPost
 instance Document BlogPost
 ```
 
-Then, write some queries:
+Then, write some queries (`updateUnique` searches by unique key, and either
+inserts or updates depending on result; `intValUnique` is a shorthand that
+wraps a value into an `Unique`, then unwraps the internal `DBWord`, which is
+the result of hashing the value):
 
 ```Haskell
 {-# LANGUAGE OverloadedStrings #-}
 
 import Database.Muesli.Query
 
--- searches for person by unique key, and inserts or updates it if exists
 updatePerson :: String -> String -> Transaction (DocID Person, Person)
 updatePerson name email = do
   let name' = Indexable name
@@ -125,14 +128,14 @@ TODO
 * testing it on mobile devices
 * static property names, but no ugly `Proxy :: Proxy "FieldName"` stuff
 * support for extensible records ("lax" `Serialize` instance),
-live up to the "document-oriented" label
+live up to the "document-oriented" label, but this should be optional
 * better migration story
 * radix tree / PATRICIA implementation for proper full-text search
-(currently indexing strings just takes first 4 chars and turnes them into int,
+(currently indexing strings just takes first 4 chars and turnes them into an int,
 which is good enough for simple sorting)
 * replication
 * fancy query language
-* waiting for [`OverloadedRecordFields`](https://ghc.haskell.org/trac/ghc/wiki/Records/OverloadedRecordFields)
+* waiting some more for [`OverloadedRecordFields`](https://ghc.haskell.org/trac/ghc/wiki/Records/OverloadedRecordFields)
 
 Implementation
 --------------
