@@ -25,10 +25,8 @@ module Database.Muesli.Cache
   ) where
 
 import           Data.Dynamic    (Dynamic, fromDynamic, toDyn)
-import           Data.Int        (Int64)
 import           Data.IntPSQ     (IntPSQ)
 import qualified Data.IntPSQ     as PQ
-import           Data.Maybe      (fromJust)
 import           Data.Time.Clock (NominalDiffTime, UTCTime, diffUTCTime)
 import           Data.Typeable   (Typeable)
 import           Prelude         hiding (lookup)
@@ -59,7 +57,7 @@ trim now c =
   if cSize c < cMinCap c then c
   else case PQ.findMin (cQueue c) of
     Nothing        -> c
-    Just (k, p, v) -> if (cSize c < cMaxCap c) && (diffUTCTime now p < cMaxAge c)
+    Just (_, p, v) -> if (cSize c < cMaxCap c) && (diffUTCTime now p < cMaxAge c)
                       then c
                       else trim now $! c { cSize  = cSize c - dynSize v
                                          , cQueue = PQ.deleteMin (cQueue c)

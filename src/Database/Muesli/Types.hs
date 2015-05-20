@@ -21,6 +21,7 @@
 
 module Database.Muesli.Types
   ( DBWord (..)
+  , dbWordSize
   , Property (..)
   , DocID (..)
   , IntVal (..)
@@ -69,6 +70,9 @@ instance Serialize DBWord where
 
 instance Show DBWord where
   showsPrec p = showsPrec p . unDBWord
+
+dbWordSize :: Int
+dbWordSize = finiteBitSize (0 :: DBWord) `div` 8
 
 type PropID   = DBWord
 type DID      = DBWord
@@ -158,8 +162,6 @@ instance DBValue (Indexable DBWord) where
 instance DBValue (Indexable Int) where
   getDBValues (Indexable a) = [ fromIntegral a ]
   isReference _ = False
-
-dbWordSize = finiteBitSize (undefined :: DBWord) `div` 8
 
 instance {-# OVERLAPPABLE #-} Show a => DBValue (Indexable a) where
   getDBValues (Indexable a) = [ snd $ foldl' f (dbWordSize - 1, 0) bytes ]

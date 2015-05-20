@@ -18,13 +18,13 @@ module Database.Muesli.Indexes
   , updateRefIdx
   ) where
 
-import           Data.IntMap.Strict       (IntMap)
-import qualified Data.IntMap.Strict       as Map
-import qualified Data.IntSet              as Set
-import           Data.List                (foldl')
-import           Database.Muesli.Internal
+import           Data.IntMap.Strict    (IntMap)
+import qualified Data.IntMap.Strict    as Map
+import qualified Data.IntSet           as Set
+import           Data.List             (foldl')
+import           Database.Muesli.State
 
-updateMainIdx :: IntMap [DocRecord] -> [DocRecord] -> IntMap [DocRecord]
+updateMainIdx :: MainIndex -> [DocRecord] -> MainIndex
 updateMainIdx = foldl' f
   where f idx r = let did = fromIntegral (docID r) in
                   let rs' = maybe [r] (r:) (Map.lookup did idx) in
@@ -72,7 +72,6 @@ updateRefIdx :: FilterIndex -> [DocRecord] -> FilterIndex
 updateRefIdx = foldl' f
   where f idx r = foldl' g idx (docDRefs r)
           where
-            did = fromIntegral (docID r)
             del = docDel r
             g idx' ref =
               let rpid = fromIntegral (drefPID ref) in

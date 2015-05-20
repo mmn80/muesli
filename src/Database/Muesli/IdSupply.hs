@@ -15,9 +15,9 @@
 
 module Database.Muesli.IdSupply
   ( IdSupply
-  , emptyIdSupply
-  , reserveId
-  , allocId
+  , empty
+  , reserve
+  , alloc
   ) where
 
 import           Control.Exception     (throw)
@@ -26,14 +26,15 @@ import qualified Data.IntMap.Strict    as Map
 import           Database.Muesli.Types (DBWord, DatabaseError (..))
 
 type IdSupply = IntMap Size
+
 type TID      = DBWord
 type Size     = DBWord
 
-emptyIdSupply :: IdSupply
-emptyIdSupply = Map.singleton 1 (maxBound - 1)
+empty :: IdSupply
+empty = Map.singleton 1 (maxBound - 1)
 
-reserveId :: TID -> IdSupply -> IdSupply
-reserveId tidb s = maybe s
+reserve :: TID -> IdSupply -> IdSupply
+reserve tidb s = maybe s
   (\(st, szdb) ->
       let sz = fromIntegral szdb in
       let delta = tidb - fromIntegral st in
@@ -47,8 +48,8 @@ reserveId tidb s = maybe s
   (Map.lookupLE tid s)
   where tid = fromIntegral tidb
 
-allocId :: IdSupply -> (TID, IdSupply)
-allocId s =
+alloc :: IdSupply -> (TID, IdSupply)
+alloc s =
   case Map.lookupGE 0 s of
     Nothing -> throw $ IdAllocationError "ID allocation error: supply empty."
     Just (st, sz) ->

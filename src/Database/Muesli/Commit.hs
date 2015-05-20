@@ -17,43 +17,33 @@
 module Database.Muesli.Commit
   ( Transaction (..)
   , TransactionState (..)
-  , runTransaction
+  , runQuery
   , TransactionAbort (..)
   , updateManThread
   ) where
 
 import           Control.Concurrent        (threadDelay)
 import           Control.Exception         (Exception)
-import           Control.Monad             (forM, forM_, liftM, mplus, unless,
-                                            when)
+import           Control.Monad             (forM_, liftM, unless, when)
 import           Control.Monad.State       (StateT)
 import qualified Control.Monad.State       as S
 import           Control.Monad.Trans       (MonadIO (liftIO))
 import           Data.ByteString           (ByteString)
-import qualified Data.ByteString           as B
 import           Data.Function             (on)
-import           Data.IntMap.Strict        (IntMap)
 import qualified Data.IntMap.Strict        as Map
-import           Data.IntSet               (IntSet)
-import qualified Data.IntSet               as Set
 import           Data.List                 (foldl')
 import qualified Data.List                 as L
 import           Data.Maybe                (fromMaybe)
-import           Data.Serialize            (Serialize (..), decode, encode)
-import           Data.String               (IsString (..))
-import           Data.Time.Clock           (getCurrentTime)
-import           Data.Typeable             (Typeable)
-import           Database.Muesli.Allocator
+import qualified Database.Muesli.Allocator as Gaps
 import qualified Database.Muesli.Cache     as Cache
-import           Database.Muesli.IdSupply
 import           Database.Muesli.Indexes
-import           Database.Muesli.Internal
+import           Database.Muesli.IO
+import           Database.Muesli.State
 import           Database.Muesli.Types
-import           Database.Muesli.Utils
 import           Prelude                   hiding (filter, lookup)
-import qualified System.IO                 as IO
 
-newtype Transaction m a = Transaction { unTransaction :: StateT TransactionState m a }
+newtype Transaction m a = Transaction
+  { unTransaction :: StateT TransactionState m a }
   deriving (Functor, Applicative, Monad)
 
 instance MonadIO m => MonadIO (Transaction m) where
@@ -73,9 +63,9 @@ data TransactionAbort = AbortUnique String
 
 instance Exception TransactionAbort
 
-runTransaction :: MonadIO m => Handle -> Transaction m a ->
-                  m (Either TransactionAbort a)
-runTransaction h (Transaction t) = do
+runQuery :: MonadIO m => Handle -> Transaction m a ->
+            m (Either TransactionAbort a)
+runQuery h (Transaction t) = do
   tid <- mkNewId h
   (a, q, u) <- runUserCode tid
   if null u then return $ Right a
@@ -142,16 +132,14 @@ runTransaction h (Transaction t) = do
 
     allocFold (ts, gs) (r, bs) =
       if docDel r then ((r, bs):ts, gs)
-      else ((t, bs):ts, gs')
-        where (a, gs') = alloc gs $ docSize r
-              t = r { docAddr = a }
+      else ((r', bs):ts, gs')
+        where (a, gs') = Gaps.alloc gs $ docSize r
+              r' = r { docAddr = a }
 
     writeTransactions m ts = do
       logSeek m
-      forM_ ts $ \(t, _) ->
-        writeLogTRec (logHandle m) $ Pending t
-
--- Update Manager ------------------------------------------------------------
+      forM_ ts $ \(r, _) ->
+        writeLogTRec (logHandle m) $ Pending r
 
 updateManThread :: Handle -> Bool -> IO ()
 updateManThread h w = do
@@ -165,12 +153,8 @@ updateManThread h w = do
       >>=
       maybe (return True) (\(tid, rs) -> do
         withData h $ \(DataState hnd cache) -> do
-          let maxAddr = toInteger . maximum $ (\r -> docAddr r + docSize r) .
-                        fst <$> rs
-          sz <- IO.hFileSize hnd
-          when (sz < maxAddr + 1) $ do
-            let nsz = max (maxAddr + 1) $ sz + 4096
-            IO.hSetFileSize hnd nsz
+          let maxAddr = maximum $ (\r -> docAddr r + docSize r) . fst <$> rs
+          checkDataSize hnd . fromIntegral $ maxAddr + 1
           forM_ rs $ \(r, bs) -> writeDocument r bs hnd
           let cache' = foldl' (\c (r, _) -> Cache.delete (fromIntegral $ docAddr r) c)
                          cache rs
@@ -204,8 +188,3 @@ updateManThread h w = do
                        then Map.empty else lgc
                 lgc' = if keep || not (null lgp')
                        then Map.insert tid ors lc else lc
-
-logSeek :: MonadIO m => MasterState -> m ()
-logSeek m = liftIO $ IO.hSeek h IO.AbsoluteSeek p
-  where h = logHandle m
-        p = fromIntegral $ dbWordSize * fromIntegral (1 + logPos m)

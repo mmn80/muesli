@@ -20,43 +20,40 @@ module Database.Muesli.Handle
   , debug
   ) where
 
-import           Control.Concurrent          (forkIO, newMVar)
-import           Control.Exception           (throw)
-import           Control.Monad               (replicateM)
-import           Control.Monad.Trans         (MonadIO (liftIO))
-import qualified Data.ByteString             as B
-import qualified Data.IntMap.Strict          as Map
-import qualified Data.List                   as L
-import           Data.Maybe                  (fromMaybe)
-import           Data.Serialize              (decode)
-import           Database.Muesli.Allocator
-import qualified Database.Muesli.Cache       as Cache
+import           Control.Concurrent        (forkIO, newMVar)
+import           Control.Monad.Trans       (MonadIO (liftIO))
+import qualified Data.ByteString           as B
+import qualified Data.IntMap.Strict        as Map
+import           Data.Maybe                (fromMaybe)
+import qualified Database.Muesli.Allocator as Gaps
+import qualified Database.Muesli.Cache     as Cache
 import           Database.Muesli.Commit
 import           Database.Muesli.GC
-import           Database.Muesli.IdSupply    (emptyIdSupply)
+import qualified Database.Muesli.IdSupply  as Ids
 import           Database.Muesli.Indexes
-import           Database.Muesli.Internal
-import           Database.Muesli.Transaction
+import           Database.Muesli.IO
+import           Database.Muesli.State
 import           Database.Muesli.Types
-import           Database.Muesli.Utils
-import           System.FilePath             ((</>))
-import qualified System.IO                   as IO
+import           System.FilePath           ((</>))
+import           System.IO                 (BufferMode (..), IOMode (..),
+                                            hClose, hSetBuffering,
+                                            openBinaryFile)
 
 open :: MonadIO m => Maybe FilePath -> Maybe FilePath -> m Handle
 open lf df = do
   let logPath = fromMaybe ("data" </> "docdb.log") lf
   let datPath = fromMaybe ("data" </> "docdb.dat") df
-  lfh <- liftIO $ IO.openBinaryFile logPath IO.ReadWriteMode
-  dfh <- liftIO $ IO.openBinaryFile datPath IO.ReadWriteMode
-  liftIO $ IO.hSetBuffering lfh IO.NoBuffering
-  liftIO $ IO.hSetBuffering dfh IO.NoBuffering
+  lfh <- liftIO $ openBinaryFile logPath ReadWriteMode
+  dfh <- liftIO $ openBinaryFile datPath ReadWriteMode
+  liftIO $ hSetBuffering lfh NoBuffering
+  liftIO $ hSetBuffering dfh NoBuffering
   (pos, lsz) <- readLogPos lfh
   let m = MasterState { logHandle = lfh
                       , logPos    = pos
                       , logSize   = lsz
-                      , idSupply  = emptyIdSupply
+                      , idSupply  = Ids.empty
                       , keepTrans = False
-                      , gaps      = emptyGaps 0
+                      , gaps      = Gaps.empty 0
                       , logPend   = Map.empty
                       , logComp   = Map.empty
                       , mainIdx   = Map.empty
@@ -67,7 +64,7 @@ open lf df = do
   m' <- if (pos > 0) && (fromIntegral lsz > dbWordSize)
         then readLog m 0
         else return m
-  let m'' = m' { gaps = buildGaps $ mainIdx m' }
+  let m'' = m' { gaps = Gaps.build $ mainIdx m' }
   mv <- liftIO $ newMVar m''
   let d = DataState { dataHandle = dfh
                     , dataCache  = Cache.empty 0x100000 (0x100000 * 10) 60
@@ -85,49 +82,6 @@ open lf df = do
   liftIO . forkIO $ updateManThread h True
   liftIO . forkIO $ gcThread h
   return h
-
-close :: MonadIO m => Handle -> m ()
-close h = do
-  withGC h . const $ return (KillGC, ())
-  withUpdateMan h . const $ return (True, ())
-  withMasterLock h $ \m -> IO.hClose (logHandle m)
-  withDataLock   h $ \(DataState d _) -> IO.hClose d
-
-performGC :: MonadIO m => Handle -> m ()
-performGC h = withGC h . const $ return (PerformGC, ())
-
-debug :: MonadIO m => Handle -> Bool -> Bool -> m String
-debug h sIdx sCache = do
-  mstr <- withMasterLock h $ \m -> return $
-    showsH   "logPos    : " (logPos m) .
-    showsH "\nlogSize   : " (logSize m) .
-    showsH "\nidSupply  :\n  " (idSupply m) .
-    showsH "\nlogPend   :\n  " (logPend m) .
-    showsH "\nlogComp   :\n  " (logComp m) .
-    if sIdx then
-    showsH "\nmainIdx   :\n  " (mainIdx m) .
-    showsH "\nunqIdx    :\n  " (unqIdx m) .
-    showsH "\nintIdx    :\n  " (intIdx m) .
-    showsH "\nrefIdx    :\n  " (refIdx m) .
-    showsH "\ngaps      :\n  " (gaps m)
-    else showString ""
-  dstr <- withDataLock h $ \d -> return $
-    showsH "\ncacheSize : " (Cache.cSize $ dataCache d) .
-    if sCache then
-    showsH "\ncache     :\n  " (Cache.cQueue $ dataCache d)
-    else showString ""
-  return $ mstr . dstr $ ""
-  where showsH s a = showString s . shows a
-
-readLogPos :: MonadIO m => IO.Handle -> m (Addr, Size)
-readLogPos h = do
-  sz <- liftIO $ IO.hFileSize h
-  if sz >= fromIntegral dbWordSize then do
-    liftIO $ IO.hSeek h IO.AbsoluteSeek 0
-    w <- readWord h
-    return (w, fromIntegral sz)
-  else
-    return (0, 0)
 
 readLog :: MonadIO m => MasterState -> Int -> m MasterState
 readLog m pos = do
@@ -158,53 +112,35 @@ readLog m pos = do
   if pos' >= (fromIntegral (logPos m) - 1)
   then return m' else readLog m' pos'
 
-readWord :: MonadIO m => IO.Handle -> m DBWord
-readWord h = do
-  bs <- liftIO $ B.hGet h dbWordSize
-  either (logError h . showString) return (decode bs)
+performGC :: MonadIO m => Handle -> m ()
+performGC h = withGC h . const $ return (PerformGC, ())
 
-readLogTRec :: MonadIO m => IO.Handle -> m TRec
-readLogTRec h = do
-  tag <- readWord h
-  case fromIntegral tag of
-    x | x == pndTag -> do
-      tid <- readWord h
-      did <- readWord h
-      adr <- readWord h
-      siz <- readWord h
-      del <- readWord h
-      dlb <- case fromIntegral del of
-               x | x == truTag  -> return True
-               x | x == flsTag -> return False
-               _ -> logError h $
-                      showString "True ('T') or False ('F') tag expected but " .
-                      shows del . showString " found."
-      us <- readWordList IntReference
-      is <- readWordList IntReference
-      ds <- readWordList DocReference
-      return $ Pending DocRecord { docID    = did
-                                 , docTID   = tid
-                                 , docURefs = us
-                                 , docIRefs = is
-                                 , docDRefs = ds
-                                 , docAddr  = adr
-                                 , docSize  = siz
-                                 , docDel   = dlb
-                                 }
-    x | x == cmpTag -> do
-      tid <- readWord h
-      return $ Completed tid
-    _ -> logError h $ showString "Pending ('p') or Completed ('c') tag expected but " .
-           shows tag . showString " found."
-  where readWordList con = do
-          sz <- readWord h
-          replicateM (fromIntegral sz) $ do
-            pid <- readWord h
-            val <- readWord h
-            return $ con pid val
+debug :: MonadIO m => Handle -> Bool -> Bool -> m String
+debug h sIdx sCache = do
+  mstr <- withMasterLock h $ \m -> return $
+    showsH   "logPos    : " (logPos m) .
+    showsH "\nlogSize   : " (logSize m) .
+    showsH "\nidSupply  :\n  " (idSupply m) .
+    showsH "\nlogPend   :\n  " (logPend m) .
+    showsH "\nlogComp   :\n  " (logComp m) .
+    if sIdx then
+    showsH "\nmainIdx   :\n  " (mainIdx m) .
+    showsH "\nunqIdx    :\n  " (unqIdx m) .
+    showsH "\nintIdx    :\n  " (intIdx m) .
+    showsH "\nrefIdx    :\n  " (refIdx m) .
+    showsH "\ngaps      :\n  " (gaps m)
+    else showString ""
+  dstr <- withDataLock h $ \d -> return $
+    showsH "\ncacheSize : " (Cache.cSize $ dataCache d) .
+    if sCache then
+    showsH "\ncache     :\n  " (Cache.cQueue $ dataCache d)
+    else showString ""
+  return $ mstr . dstr $ ""
+  where showsH s a = showString s . shows a
 
-logError :: MonadIO m => IO.Handle -> ShowS -> m a
-logError h err = do
-  pos <- liftIO $ IO.hTell h
-  liftIO . throw . LogParseError (fromIntegral pos) . showString
-    "Corrupted log. " $ err ""
+close :: MonadIO m => Handle -> m ()
+close h = do
+  withGC h . const $ return (KillGC, ())
+  withUpdateMan h . const $ return (True, ())
+  withMasterLock h $ \m -> hClose (logHandle m)
+  withDataLock   h $ \(DataState d _) -> hClose d

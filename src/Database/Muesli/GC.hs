@@ -12,10 +12,7 @@
 ----------------------------------------------------------------------------
 
 module Database.Muesli.GC
-  ( gcThread
-  , withGC
-  , reserveIdsRec
-  ) where
+  ( gcThread ) where
 
 import           Control.Concurrent        (threadDelay)
 import           Control.Monad             (forM_, unless, when)
@@ -23,11 +20,12 @@ import           Data.Function             (on)
 import           Data.IntMap.Strict        ((\\))
 import qualified Data.IntMap.Strict        as Map
 import           Data.List                 (foldl', groupBy, sortOn)
-import           Database.Muesli.Allocator
-import           Database.Muesli.IdSupply
+import qualified Database.Muesli.Allocator as Gaps
+import qualified Database.Muesli.IdSupply  as Ids
 import           Database.Muesli.Indexes
-import           Database.Muesli.Internal
-import           Database.Muesli.Utils
+import           Database.Muesli.IO
+import           Database.Muesli.State
+import           Database.Muesli.Types
 import           System.Directory          (renameFile)
 import qualified System.IO                 as IO
 
@@ -41,7 +39,7 @@ gcThread h = do
       let (rs2, dpos) = realloc 0 rs
       let rs' = sortOn docTID $ map fst rs2
       let ts  = concatMap toTRecs $ groupBy ((==) `on` docTID) rs'
-      let ids = foldl' reserveIdsRec emptyIdSupply . map fromPending $
+      let ids = foldl' reserveIdsRec Ids.empty . map fromPending $
                 filter isPending ts
       let pos = sum $ tRecSize <$> ts
       let logPath = logFilePath (unHandle h)
@@ -72,8 +70,8 @@ gcThread h = do
           hnd <- IO.openBinaryFile logPath IO.ReadWriteMode
           IO.hSetBuffering hnd IO.NoBuffering
           IO.withBinaryFile dataPathNew IO.ReadWriteMode $ writeData ncrs' dpos'' h
-          let gs = buildExtraGaps dpos'' . filter docDel $
-                     ncrs ++ (map fst . concat $ Map.elems logp')
+          let gs = Gaps.buildExtra dpos'' . filter docDel $
+                   ncrs ++ (map fst . concat $ Map.elems logp')
           let m = MasterState { logHandle = hnd
                               , logPos    = fromIntegral pos'
                               , logSize   = fromIntegral sz'
@@ -100,40 +98,40 @@ gcThread h = do
   unless (sgn == KillGC) $ do
     threadDelay $ 1000 * 1000
     gcThread h
-  where
-    toTRecs rs = foldl' (\ts r -> Pending r : ts)
-                 [Completed . docTID $ head rs] rs
 
-    writeTrans osz pos ts hnd = do
-      sz <- checkLogSize hnd osz pos
-      IO.hSeek hnd IO.AbsoluteSeek $ fromIntegral dbWordSize
-      forM_ ts $ writeLogTRec hnd
-      writeLogPos hnd $ fromIntegral pos
-      return sz
+toTRecs :: [DocRecord] -> [TRec]
+toTRecs rs = foldl' (\ts r -> Pending r : ts)
+             [Completed . docTID $ head rs] rs
 
-    writeData rs sz h hnd = do
-      IO.hSetFileSize hnd $ fromIntegral sz
-      forM_ rs $ \(r, oldr) -> do
-        bs <- withDataLock h $ \(DataState hnd _) -> readDocumentFromFile hnd oldr
-        writeDocument r bs hnd
+writeTrans :: Int -> Int -> [TRec] -> IO.Handle -> IO Int
+writeTrans osz pos ts hnd = do
+  sz <- checkLogSize hnd osz pos
+  IO.hSeek hnd IO.AbsoluteSeek $ fromIntegral dbWordSize
+  forM_ ts $ writeLogTRec hnd
+  writeLogPos hnd $ fromIntegral pos
+  return sz
 
-    realloc st = foldl' f ([], st)
-      where f (nrs, pos) r =
-              if docDel r then ((r, r) : nrs, pos)
-              else ((r { docAddr = pos }, r) : nrs, pos + docSize r)
+writeData :: [(DocRecord, DocRecord)] -> Size -> Handle -> IO.Handle -> IO ()
+writeData rs sz h hnd = do
+  IO.hSetFileSize hnd $ fromIntegral sz
+  forM_ rs $ \(r, oldr) -> do
+    bs <- withDataLock h $ \(DataState dh _) -> readDocument dh oldr
+    writeDocument r bs hnd
 
-    realloc' st idx = (Map.fromList l, pos)
-      where (l, pos) = foldl' f ([], st) $ Map.toList idx
-            f (lst, pos) (tid, rs) = ((tid, rs') : lst, pos')
-              where (rss', pos') = realloc pos $ fst <$> rs
-                    rs' = (fst <$> rss') `zip` (snd <$> rs)
+realloc :: Addr -> [DocRecord] -> ([(DocRecord, DocRecord)], Addr)
+realloc st = foldl' f ([], st)
+  where f (nrs, pos) r =
+          if docDel r then ((r, r) : nrs, pos)
+          else ((r { docAddr = pos }, r) : nrs, pos + docSize r)
 
-    buildExtraGaps pos = foldl' f (emptyGaps pos)
-      where f gs r = addGap (docSize r) (docAddr r) gs
+realloc' :: Addr -> Map.IntMap [(DocRecord, b)] -> (Map.IntMap [(DocRecord, b)], Addr)
+realloc' st idx = (Map.fromList l, pos)
+  where (l, pos) = foldl' f ([], st) $ Map.toList idx
+        f (lst, p) (tid, rs) = ((tid, rs') : lst, p')
+          where (rss', p') = realloc p $ fst <$> rs
+                rs' = (fst <$> rss') `zip` (snd <$> rs)
 
-    forceEval mIdx iIdx rIdx = Map.notMember (-1) mIdx &&
-                               Map.size iIdx > (-1) &&
-                               Map.size rIdx > (-1)
-
-reserveIdsRec :: IdSupply -> DocRecord -> IdSupply
-reserveIdsRec s r = reserveId (docTID r) $ reserveId (docID r) s
+forceEval :: Map.IntMap a -> Map.IntMap b -> Map.IntMap c -> Bool
+forceEval mIdx iIdx rIdx = Map.notMember (-1) mIdx &&
+                           Map.size iIdx > (-1) &&
+                           Map.size rIdx > (-1)

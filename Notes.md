@@ -141,7 +141,7 @@ Also range/page queries, and queries on the `intIdx` and `unqIdx`.
 ### Running Transactions
 
 ```haskell
-runTrans :: Handle -> Trans a -> IO (Maybe a)
+runQuery :: Handle -> Trans a -> IO (Maybe a)
 
 ReadList   = [DID]
 UpdateList = [(DocRecord, ByteString)]

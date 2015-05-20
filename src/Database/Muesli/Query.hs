@@ -2,7 +2,7 @@
 
 -----------------------------------------------------------------------------
 -- |
--- Module : Database.Muesli.Transaction
+-- Module : Database.Muesli.Query
 -- Copyright : (C) 2015 Călin Ardelean,
 -- License : MIT (see the file LICENSE)
 --
@@ -13,10 +13,10 @@
 -- This module provides the Transaction monad and its primitive queries.
 ----------------------------------------------------------------------------
 
-module Database.Muesli.Transaction
+module Database.Muesli.Query
   ( Transaction
   , TransactionAbort (..)
-  , runTransaction
+  , runQuery
   , lookup
   , insert
   , update
@@ -29,35 +29,27 @@ module Database.Muesli.Transaction
   , size
   ) where
 
-import           Control.Concurrent       (threadDelay)
-import           Control.Exception        (Exception, throw)
-import           Control.Monad            (forM, forM_, liftM, mplus, unless,
-                                           when)
-import qualified Control.Monad.State      as S
-import           Control.Monad.Trans      (MonadIO (liftIO))
-import           Data.ByteString          (ByteString)
-import qualified Data.ByteString          as B
-import           Data.Function            (on)
-import           Data.IntMap.Strict       (IntMap)
-import qualified Data.IntMap.Strict       as Map
-import           Data.IntSet              (IntSet)
-import qualified Data.IntSet              as Set
-import           Data.List                (foldl')
-import qualified Data.List                as L
-import           Data.Maybe               (fromMaybe)
-import           Data.Serialize           (Serialize (..), decode, encode)
-import           Data.String              (IsString (..))
-import           Data.Time.Clock          (getCurrentTime)
-import           Data.Typeable            (Typeable)
-import qualified Database.Muesli.Cache    as Cache
+import           Control.Exception      (throw)
+import           Control.Monad          (forM, liftM, mplus)
+import qualified Control.Monad.State    as S
+import           Control.Monad.Trans    (MonadIO (liftIO))
+import qualified Data.ByteString        as B
+import           Data.IntMap.Strict     (IntMap)
+import qualified Data.IntMap.Strict     as Map
+import           Data.IntSet            (IntSet)
+import qualified Data.IntSet            as Set
+import qualified Data.List              as L
+import           Data.Maybe             (fromMaybe)
+import           Data.Serialize         (Serialize (..), decode, encode)
+import           Data.String            (IsString (..))
+import           Data.Time.Clock        (getCurrentTime)
+import           Data.Typeable          (Typeable)
+import qualified Database.Muesli.Cache  as Cache
 import           Database.Muesli.Commit
-import           Database.Muesli.IdSupply
-import           Database.Muesli.Indexes
-import           Database.Muesli.Internal
+import           Database.Muesli.IO
+import           Database.Muesli.State
 import           Database.Muesli.Types
-import           Database.Muesli.Utils
-import           Prelude                  hiding (filter, lookup)
-import qualified System.IO                as IO
+import           Prelude                hiding (filter, lookup)
 
 lookup :: (Document a, MonadIO m) => DocID a -> Transaction m (Maybe (DocID a, a))
 lookup (DocID did) = Transaction $ do
@@ -65,7 +57,7 @@ lookup (DocID did) = Transaction $ do
   mbr <- withMasterLock (transHandle t) $ \m ->
            return $ findFirstDoc m t did
   mba <- maybe (return Nothing) (\r -> do
-           a <- readDocument (transHandle t) r
+           a <- getDocument (transHandle t) r
            return $ Just (DocID did, a))
          mbr
   S.put t { transReadList = did : transReadList t }
@@ -111,7 +103,7 @@ update did a = Transaction $ do
   S.put t { transUpdateList = (r, bs) : transUpdateList t }
   where
     fi (p, val) = IntReference (getP p) val
-    fd (p, did) = DocReference (getP p) did
+    fd (p, rid) = DocReference (getP p) rid
     getP p = fst $ unProperty (fromString p :: Property a)
 
 insert :: (Document a, MonadIO m) => a -> Transaction m (DocID a)
@@ -145,7 +137,7 @@ page_ f mdid = Transaction $ do
            let mbds = findFirstDoc m t . fromIntegral <$> ds
            return $ concatMap (foldMap pure) mbds
   dds' <- forM (reverse dds) $ \d -> do
-    a <- readDocument (transHandle t) d
+    a <- getDocument (transHandle t) d
     return (DocID $ docID d, a)
   S.put t { transReadList = (unDocID . fst <$> dds') ++ transReadList t }
   return dds'
@@ -183,7 +175,7 @@ rangeK mst msti p pg = pageK_ f mst
                                 Map.lookup (prop2Int p) (intIdx m)
 
 getPage :: Int -> Int -> Int -> IntMap IntSet -> [Int]
-getPage st sti p idx = go st p []
+getPage sta sti pg idx = go sta pg []
   where go st p acc =
           if p == 0 then acc
           else case Map.lookupLT st idx of
@@ -194,7 +186,7 @@ getPage st sti p idx = go st p []
                    else go n p' $ ids ++ acc
 
 getPage2 :: Int -> Int -> IntSet -> (Int, [Int])
-getPage2 st p idx = go st p []
+getPage2 sta pg idx = go sta pg []
   where go st p acc =
           if p == 0 then (0, acc)
           else case Set.lookupLT st idx of
@@ -207,20 +199,23 @@ size p = Transaction $ do
   withMasterLock (transHandle t) $ \m -> return . fromMaybe 0 $
     (sum . map (Set.size . snd) . Map.toList) <$> Map.lookup (prop2Int p) (intIdx m)
 
+rval :: Maybe (DocID a) -> Int
+rval = fromIntegral . unDocID . fromMaybe maxBound
+
 ival :: Maybe (IntVal a) -> Int
 ival = fromIntegral . unIntVal. fromMaybe maxBound
 
 prop2Int :: Document a => Property a -> Int
 prop2Int = fromIntegral . fst . unProperty
 
-readDocument :: (Typeable a, Serialize a, MonadIO m) => Handle -> DocRecord -> m a
-readDocument h r =
+getDocument :: (Typeable a, Serialize a, MonadIO m) => Handle -> DocRecord -> m a
+getDocument h r =
   withData h $ \(DataState hnd cache) -> do
     now <- getCurrentTime
     let k = fromIntegral $ docAddr r
     case Cache.lookup now k cache of
       Nothing -> do
-        bs <- readDocumentFromFile hnd r
+        bs <- readDocument hnd r
         a <- either (liftIO . throw . DataParseError k (fromIntegral $ docSize r) .
                     showString "Deserialization error: ")
              return (decode bs)

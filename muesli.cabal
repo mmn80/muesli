@@ -21,15 +21,15 @@ library
   exposed-modules:
     Database.Muesli.Types,
     Database.Muesli.Handle,
-    Database.Muesli.Transaction,
-    Database.Muesli.Internal,
+    Database.Muesli.Query,
+    Database.Muesli.State,
     Database.Muesli.IdSupply,
     Database.Muesli.Allocator,
     Database.Muesli.Cache,
     Database.Muesli.Indexes,
+    Database.Muesli.IO,
     Database.Muesli.Commit,
-    Database.Muesli.GC,
-    Database.Muesli.Utils
+    Database.Muesli.GC
   build-depends:
     base >=4.8,
     mtl,
