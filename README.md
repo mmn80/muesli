@@ -26,7 +26,7 @@ Features
 SELECT TOP p * FROM t WHERE c = k AND o < s ORDER BY o DESC
 ```
 * easy to reason about performance: all primitive queries run in **O(log n)**.
-* type-safety: impossible to attempt deserializeng record at wrong type
+* type-safety: impossible to attempt deserializing record at wrong type
 (or address), and risk getting bogus data with no error thrown.
 IDs are tagged with a phantom type and given to you by the polymorphic primitives.
 There are also `Num`/`Integral` instances to support more generic database apps,
@@ -120,7 +120,6 @@ main = bracket
 
 TODO
 ----
-* bug? lookups after updates in the same transaction
 * expose the inverted index
 * queries that only return keys (no data file IO)
 * testing it on mobile devices
