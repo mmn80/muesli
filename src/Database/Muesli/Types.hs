@@ -5,34 +5,37 @@
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE TupleSections              #-}
 {-# LANGUAGE TypeOperators              #-}
+{-# LANGUAGE UndecidableInstances       #-}
 
 -----------------------------------------------------------------------------
 -- |
--- Module : Database.Muesli.Types
--- Copyright : (C) 2015 Călin Ardelean,
--- License : MIT (see the file LICENSE)
+-- Module      : Database.Muesli.Types
+-- Copyright   : (C) 2015 Călin Ardelean,
+-- License     : MIT (see the file LICENSE.md)
 --
--- Maintainer : Călin Ardelean <calinucs@gmail.com>
--- Stability : experimental
+-- Maintainer  : Călin Ardelean <calinucs@gmail.com>
+-- Stability   : experimental
 -- Portability : portable
 --
--- This module provides Muesli markup types and typeclasses.
+-- Muesli markup types and typeclasses.
 ----------------------------------------------------------------------------
 
 module Database.Muesli.Types
-  ( DBWord (..)
+  (
+-- * General
+    DBWord (..)
   , dbWordSize
-  , Property (..)
-  , DocID (..)
-  , IntVal (..)
-  , intVal
-  , intValUnique
-  , Unique (..)
-  , Indexable (..)
-  , DBValue (..)
-  , Indexables (..)
-  , Document (..)
+  , ToDBWord (..)
   , DatabaseError (..)
+  , Property (..)
+-- * Main classes
+  , Indexable (..)
+  , Document (..)
+  , Indexables (..)
+-- * Indexable value wrappers
+  , Reference (..)
+  , Sortable (..)
+  , Unique (..)
   ) where
 
 import           Control.Exception     (Exception)
@@ -53,14 +56,26 @@ import           GHC.Generics          ((:*:) (..), (:+:) (..), C, D, Generic,
                                         U1 (..), from, selName)
 import           Numeric               (showHex)
 
-data DatabaseError = LogParseError Int String
+-- | Type for exceptions thrown by the database.
+-- During normal operation these should never be thrown.
+data DatabaseError =
+-- | Thrown when the log file is corrupted.
+-- Holds file position and a message.
+                     LogParseError Int String
+-- | Thrown after deserialization errors.
+-- Holds starting position, size, and a message.
                    | DataParseError Int Int String
+-- | ID allocation failure. For instance, full address space.
                    | IdAllocationError String
+-- | Data allocation failure.
+-- Containes the size requested, the biggest available gap, and a message.
                    | DataAllocationError Int (Maybe Int) String
   deriving (Show)
 
 instance Exception DatabaseError
 
+-- | The internal type used to read/write in the log file.
+-- The @Serialize@ instance uses a big endian encoding.
 newtype DBWord = DBWord { unDBWord :: Word32 }
   deriving (Eq, Ord, Bounded, Num, Enum, Real, Integral, Bits, FiniteBits)
 
@@ -71,12 +86,16 @@ instance Serialize DBWord where
 instance Show DBWord where
   showsPrec p = showsPrec p . unDBWord
 
+-- | Internal. Returns the size in bytes of @DBWord@.
 dbWordSize :: Int
 dbWordSize = finiteBitSize (0 :: DBWord) `div` 8
 
-type PropID   = DBWord
-type DID      = DBWord
-type IntValue = DBWord
+type PropID = DBWord
+type DID    = DBWord
+type UnqVal = DBWord
+
+class ToDBWord a where
+  toDBWord :: a -> DBWord
 
 -- Properties ------------------------------------------------------------------
 
@@ -95,29 +114,34 @@ instance Typeable a => IsString (Property a) where
 
 -- Values ----------------------------------------------------------------------
 
-newtype DocID a = DocID { unDocID :: DID }
+newtype Reference a = Reference { unReference :: DID }
   deriving (Eq, Ord, Bounded, Num, Enum, Real, Integral, Serialize)
 
-instance Show (DocID a) where
-  showsPrec _ (DocID k) = showString "0x" . showHex k
+instance Show (Reference a) where
+  showsPrec _ (Reference k) = showString "0x" . showHex k
 
-newtype IntVal a = IntVal { unIntVal :: DID }
-  deriving (Eq, Ord, Bounded, Num, Enum, Real, Integral)
-
-instance Show (IntVal a) where
-  showsPrec _ (IntVal k) = showString "0x" . showHex k
-
-intVal :: DBValue (Indexable a) => a -> IntVal b
-intVal = fromIntegral . head . getDBValues . Indexable
-
-intValUnique :: DBValue (Unique a) => a -> IntVal b
-intValUnique = fromIntegral . fromJust . getUnique . Unique
-
-newtype Indexable a = Indexable { unIndexable :: a }
+newtype Sortable a = Sortable { unSortable :: a }
   deriving (Eq, Ord, Bounded, Serialize)
 
-instance Show a => Show (Indexable a) where
-  showsPrec p (Indexable a) = showsPrec p a
+instance Show a => Show (Sortable a) where
+  showsPrec p (Sortable a) = showsPrec p a
+
+instance ToDBWord (Sortable DBWord) where
+  toDBWord (Sortable w) = w
+
+instance ToDBWord (Sortable Bool) where
+  toDBWord (Sortable b) = if b then 1 else 0
+
+instance ToDBWord (Sortable Int) where
+  toDBWord (Sortable a) = fromIntegral a
+
+instance ToDBWord (Sortable UTCTime) where
+  toDBWord (Sortable t) = round $ utcTimeToPOSIXSeconds t
+
+instance {-# OVERLAPPABLE #-} Show a => ToDBWord (Sortable a) where
+  toDBWord (Sortable a) = snd $ foldl' f (dbWordSize - 1, 0) bytes
+    where bytes = (fromIntegral . fromEnum <$> take dbWordSize (show a)) :: [Word8]
+          f (n, v) b = (n - 1, if n >= 0 then v + fromIntegral b * 2 ^ (8 * n) else v)
 
 newtype Unique a = Unique { unUnique :: a }
   deriving (Eq, Serialize)
@@ -125,56 +149,48 @@ newtype Unique a = Unique { unUnique :: a }
 instance Show a => Show (Unique a) where
   showsPrec p (Unique a) = showsPrec p a
 
-class DBValue a where
-  getDBValues :: a -> [DBWord]
-  getDBValues _ = []
+instance Hashable a => ToDBWord (Unique (Sortable a)) where
+  toDBWord (Unique (Sortable a)) = fromIntegral $ hash a
+
+instance {-# OVERLAPPABLE #-} Hashable a => ToDBWord (Unique a) where
+  toDBWord (Unique a) = fromIntegral $ hash a
+
+class Indexable a where
+  getIxValues :: a -> [DBWord]
+  getIxValues _ = []
 
   isReference :: Proxy a -> Bool
   isReference _ = False
 
-  getUnique :: a -> Maybe IntValue
+  getUnique :: a -> Maybe UnqVal
   getUnique _ = Nothing
 
-instance DBValue (DocID a) where
-  getDBValues (DocID did) = [ did ]
+instance Indexable (Reference a) where
+  getIxValues (Reference did) = [ did ]
   isReference _ = True
 
-instance DBValue (Maybe (DocID a)) where
-  getDBValues mb = [ maybe 0 unDocID mb ]
+instance Indexable (Maybe (Reference a)) where
+  getIxValues mb = [ maybe 0 unReference mb ]
   isReference _ = True
 
-instance {-# OVERLAPPABLE #-} (DBValue a, Foldable f) => DBValue (f a) where
-  getDBValues = foldMap getDBValues
+instance {-# OVERLAPPABLE #-} (Indexable a, Foldable f) => Indexable (f a) where
+  getIxValues = foldMap getIxValues
   isReference _ = isReference (Proxy :: Proxy a)
 
-instance DBValue Bool
-instance DBValue Int
-instance DBValue String
+instance Indexable Bool
+instance Indexable Int
+instance Indexable String
 
-instance DBValue (Indexable UTCTime) where
-  getDBValues (Indexable t) = [ round $ utcTimeToPOSIXSeconds t ]
+instance ToDBWord (Sortable a) => Indexable (Sortable a) where
+  getIxValues s = [ toDBWord s ]
   isReference _ = False
 
-instance DBValue (Indexable DBWord) where
-  getDBValues (Indexable w) = [ w ]
-  isReference _ = False
+instance (Hashable a, Indexable (Sortable a)) => Indexable (Unique (Sortable a)) where
+  getUnique (Unique (Sortable a)) = Just . fromIntegral $ hash a
+  getIxValues = getIxValues . unUnique
+  isReference _ = isReference (Proxy :: Proxy (Sortable a))
 
-instance DBValue (Indexable Int) where
-  getDBValues (Indexable a) = [ fromIntegral a ]
-  isReference _ = False
-
-instance {-# OVERLAPPABLE #-} Show a => DBValue (Indexable a) where
-  getDBValues (Indexable a) = [ snd $ foldl' f (dbWordSize - 1, 0) bytes ]
-    where bytes = (fromIntegral . fromEnum <$> take dbWordSize (show a)) :: [Word8]
-          f (n, v) b = (n - 1, if n >= 0 then v + fromIntegral b * 2 ^ (8 * n) else v)
-  isReference _ = False
-
-instance (Hashable a, DBValue (Indexable a)) => DBValue (Unique (Indexable a)) where
-  getUnique (Unique (Indexable a)) = Just . fromIntegral $ hash a
-  getDBValues = getDBValues . unUnique
-  isReference _ = isReference (Proxy :: Proxy (Indexable a))
-
-instance {-# OVERLAPPABLE #-} Hashable a => DBValue (Unique a) where
+instance {-# OVERLAPPABLE #-} Hashable a => Indexable (Unique a) where
   getUnique (Unique a) = Just . fromIntegral $ hash a
 
 -- Records ---------------------------------------------------------------------
@@ -182,7 +198,7 @@ instance {-# OVERLAPPABLE #-} Hashable a => DBValue (Unique a) where
 data Indexables = Indexables
   { ixRefs :: [(String, DID)]
   , ixInts :: [(String, DID)]
-  , ixUnqs :: [(String, IntValue)]
+  , ixUnqs :: [(String, UnqVal)]
   } deriving (Show)
 
 class (Typeable a, Generic a, Serialize a) => Document a where
@@ -214,10 +230,10 @@ instance GetIndexables a => GetIndexables (M1 C c a) where
 instance (GetIndexables a, Selector c) => GetIndexables (M1 S c a) where
   ggetIndexables _ m1@(M1 x) = ggetIndexables (selName m1) x
 
-instance DBValue a => GetIndexables (K1 i a) where
+instance Indexable a => GetIndexables (K1 i a) where
   ggetIndexables n (K1 x) =
     if isReference (Proxy :: Proxy a)
     then Indexables { ixRefs = vs, ixInts = [], ixUnqs = us }
     else Indexables { ixRefs = [], ixInts = vs, ixUnqs = us }
-    where vs = (\did -> (n, did)) <$> getDBValues x
+    where vs = (\did -> (n, did)) <$> getIxValues x
           us = maybe [] (pure . (n,)) (getUnique x)

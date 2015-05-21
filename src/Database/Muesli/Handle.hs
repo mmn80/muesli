@@ -1,14 +1,14 @@
 -----------------------------------------------------------------------------
 -- |
--- Module : Database.Muesli.Handle
--- Copyright : (C) 2015 Călin Ardelean,
--- License : MIT (see the file LICENSE)
+-- Module      : Database.Muesli.Handle
+-- Copyright   : (C) 2015 Călin Ardelean,
+-- License     : MIT (see the file LICENSE.md)
 --
--- Maintainer : Călin Ardelean <calinucs@gmail.com>
--- Stability : experimental
+-- Maintainer  : Călin Ardelean <calinucs@gmail.com>
+-- Stability   : experimental
 -- Portability : portable
 --
--- This module provides resource management functions.
+-- Resource management types and functions.
 ----------------------------------------------------------------------------
 
 module Database.Muesli.Handle

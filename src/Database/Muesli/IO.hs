@@ -1,14 +1,14 @@
 -----------------------------------------------------------------------------
 -- |
--- Module : Database.Muesli.IO
--- Copyright : (C) 2015 Călin Ardelean,
--- License : MIT (see the file LICENSE)
+-- Module      : Database.Muesli.IO
+-- Copyright   : (C) 2015 Călin Ardelean,
+-- License     : MIT (see the file LICENSE.md)
 --
--- Maintainer : Călin Ardelean <calinucs@gmail.com>
--- Stability : experimental
+-- Maintainer  : Călin Ardelean <calinucs@gmail.com>
+-- Stability   : experimental
 -- Portability : portable
 --
--- This module provides log & data file IO functions.
+-- Log & data file IO functions.
 ----------------------------------------------------------------------------
 
 module Database.Muesli.IO

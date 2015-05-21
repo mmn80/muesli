@@ -1,17 +1,18 @@
+{-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TupleSections       #-}
 
 -----------------------------------------------------------------------------
 -- |
--- Module : Database.Muesli.Query
--- Copyright : (C) 2015 Călin Ardelean,
--- License : MIT (see the file LICENSE)
+-- Module      : Database.Muesli.Query
+-- Copyright   : (C) 2015 Călin Ardelean,
+-- License     : MIT (see the file LICENSE.md)
 --
--- Maintainer : Călin Ardelean <calinucs@gmail.com>
--- Stability : experimental
+-- Maintainer  : Călin Ardelean <calinucs@gmail.com>
+-- Stability   : experimental
 -- Portability : portable
 --
--- This module provides the Transaction monad and its primitive queries.
+-- The 'Transaction' monad and its primitive queries.
 ----------------------------------------------------------------------------
 
 module Database.Muesli.Query
@@ -54,14 +55,15 @@ import           Database.Muesli.State
 import           Database.Muesli.Types
 import           Prelude                hiding (filter, lookup)
 
-lookup :: (Document a, MonadIO m) => DocID a -> Transaction m (Maybe (DocID a, a))
-lookup (DocID did) = Transaction $ do
+lookup :: (Document a, MonadIO m) => Reference a ->
+          Transaction m (Maybe (Reference a, a))
+lookup (Reference did) = Transaction $ do
   t <- S.get
   mbr <- withMasterLock (transHandle t) $ \m ->
            return $ findFirstDoc m t did
   mba <- maybe (return Nothing) (\(r, mbs) -> do
            a <- getDocument (transHandle t) r mbs
-           return $ Just (DocID did, a))
+           return $ Just (Reference did, a))
          mbr
   S.put t { transReadList = did : transReadList t }
   return mba
@@ -76,30 +78,32 @@ findFirstDoc m t did = do
                      L.find ((<= transTID t) . docTID))
   if docDel r then Nothing else Just (r, mbs)
 
-lookupUnique :: MonadIO m => Property a -> IntVal b -> Transaction m (Maybe (DocID a))
-lookupUnique p (IntVal u) = Transaction $ do
+lookupUnique :: (ToDBWord (Unique b), MonadIO m) =>
+                Property a -> Unique b -> Transaction m (Maybe (Reference a))
+lookupUnique p ub = Transaction $ do
   t <- S.get
-  withMasterLock (transHandle t) $ \m -> return . liftM DocID $
+  let u = toDBWord ub
+  withMasterLock (transHandle t) $ \m -> return . liftM Reference $
     findUnique pp u (transUpdateList t)
     `mplus` (findUnique pp u . concat . Map.elems $ logPend m)
     `mplus` liftM fromIntegral (Map.lookup (fromIntegral pp) (unqIdx m) >>=
                                 Map.lookup (fromIntegral u))
   where pp = fst $ unProperty p
 
-updateUnique :: (Document a, MonadIO m) => Property a -> IntVal b -> a ->
-                Transaction m (DocID a)
+updateUnique :: (Document a, ToDBWord (Unique b), MonadIO m) =>
+                Property a -> Unique b -> a -> Transaction m (Reference a)
 updateUnique p u a = do
   mdid <- lookupUnique p u
   case mdid of
     Nothing  -> insert a
     Just did -> update did a >> return did
 
-update :: forall a m. (Document a, MonadIO m) => DocID a -> a -> Transaction m ()
+update :: forall a m. (Document a, MonadIO m) => Reference a -> a -> Transaction m ()
 update did a = Transaction $ do
   t <- S.get
   let bs = encode a
   let is = getIndexables a
-  let r = DocRecord { docID   = unDocID did
+  let r = DocRecord { docID   = unReference did
                     , docTID  = transTID t
                     , docURefs = fi <$> ixUnqs is
                     , docIRefs = fi <$> ixInts is
@@ -114,15 +118,15 @@ update did a = Transaction $ do
     fd (p, rid) = DocReference (getP p) rid
     getP p = fst $ unProperty (fromString p :: Property a)
 
-insert :: (Document a, MonadIO m) => a -> Transaction m (DocID a)
+insert :: (Document a, MonadIO m) => a -> Transaction m (Reference a)
 insert a = Transaction $ do
   t <- S.get
   tid <- mkNewId $ transHandle t
-  unTransaction $ update (DocID tid) a
-  return $ DocID tid
+  unTransaction $ update (Reference tid) a
+  return $ Reference tid
 
-delete :: MonadIO m => DocID a -> Transaction m ()
-delete (DocID did) = Transaction $ do
+delete :: MonadIO m => Reference a -> Transaction m ()
+delete (Reference did) = Transaction $ do
   t <- S.get
   mb <- withMasterLock (transHandle t) $ \m -> return $ findFirstDoc m t did
   let r = DocRecord { docID    = did
@@ -136,8 +140,9 @@ delete (DocID did) = Transaction $ do
                     }
   S.put t { transUpdateList = (r, B.empty) : transUpdateList t }
 
-page_ :: (Document a, MonadIO m) => (Int -> MasterState -> [Int]) ->
-         Maybe (IntVal b) -> Transaction m [(DocID a, a)]
+page_ :: (Document a, ToDBWord (Sortable b), MonadIO m) =>
+         (Int -> MasterState -> [Int]) -> Maybe (Sortable b) ->
+         Transaction m [(Reference a, a)]
 page_ f mdid = Transaction $ do
   t <- S.get
   dds <- withMasterLock (transHandle t) $ \m -> do
@@ -146,38 +151,39 @@ page_ f mdid = Transaction $ do
            return $ concatMap (foldMap pure) mbds
   dds' <- forM (reverse dds) $ \(d, mbs) -> do
     a <- getDocument (transHandle t) d mbs
-    return (DocID $ docID d, a)
-  S.put t { transReadList = (unDocID . fst <$> dds') ++ transReadList t }
+    return (Reference $ docID d, a)
+  S.put t { transReadList = (unReference . fst <$> dds') ++ transReadList t }
   return dds'
 
-range :: (Document a, MonadIO m) => Maybe (IntVal b) -> Maybe (DocID a) ->
-         Property a -> Int -> Transaction m [(DocID a, a)]
+range :: (Document a, ToDBWord (Sortable b), MonadIO m) => Maybe (Sortable b) ->
+         Maybe (Reference a) -> Property a -> Int ->
+         Transaction m [(Reference a, a)]
 range mst msti p pg = page_ f mst
   where f st m = fromMaybe [] $ do
                    ds <- Map.lookup (prop2Int p) (intIdx m)
                    return $ getPage st (rval msti) pg ds
 
-filter :: (Document a, MonadIO m) => Maybe (DocID c) -> Maybe (IntVal b) ->
-          Maybe (DocID a) -> Property a -> Property a -> Int ->
-          Transaction m [(DocID a, a)]
+filter :: (Document a, ToDBWord (Sortable b), MonadIO m) => Maybe (Reference c) ->
+          Maybe (Sortable b) -> Maybe (Reference a) -> Property a ->
+          Property a -> Int -> Transaction m [(Reference a, a)]
 filter mdid mst msti fprop sprop pg = page_ f mst
   where f _ m = fromMaybe [] . liftM (getPage (ival mst) (rval msti) pg) $
                   Map.lookup (fromIntegral . fst . unProperty $ fprop) (refIdx m) >>=
-                  Map.lookup (fromIntegral $ maybe 0 unDocID mdid) >>=
+                  Map.lookup (fromIntegral $ maybe 0 unReference mdid) >>=
                   Map.lookup (prop2Int sprop)
 
-pageK_ :: MonadIO m => (Int -> MasterState -> [Int]) -> Maybe (IntVal b) ->
-          Transaction m [DocID a]
+pageK_ :: (MonadIO m, ToDBWord (Sortable b)) => (Int -> MasterState -> [Int]) ->
+          Maybe (Sortable b) -> Transaction m [Reference a]
 pageK_ f mdid = Transaction $ do
   t <- S.get
   dds <- withMasterLock (transHandle t) $ \m -> return $
     concatMap (map (docID . fst) . foldMap pure . findFirstDoc m t . fromIntegral) $
     f (ival mdid) m
   S.put t { transReadList = dds ++ transReadList t }
-  return (DocID <$> dds)
+  return (Reference <$> dds)
 
-rangeK :: (Document a, MonadIO m) => Maybe (IntVal b) -> Maybe (DocID a) ->
-          Property a -> Int -> Transaction m [DocID a]
+rangeK :: (Document a, ToDBWord (Sortable b), MonadIO m) => Maybe (Sortable b) ->
+          Maybe (Reference a) -> Property a -> Int -> Transaction m [Reference a]
 rangeK mst msti p pg = pageK_ f mst
   where f st m = fromMaybe [] $ getPage st (rval msti) pg <$>
                                 Map.lookup (prop2Int p) (intIdx m)
@@ -207,11 +213,11 @@ size p = Transaction $ do
   withMasterLock (transHandle t) $ \m -> return . fromMaybe 0 $
     (sum . map (Set.size . snd) . Map.toList) <$> Map.lookup (prop2Int p) (intIdx m)
 
-rval :: Maybe (DocID a) -> Int
-rval = fromIntegral . unDocID . fromMaybe maxBound
+rval :: Maybe (Reference a) -> Int
+rval = fromIntegral . unReference . fromMaybe maxBound
 
-ival :: Maybe (IntVal a) -> Int
-ival = fromIntegral . unIntVal. fromMaybe maxBound
+ival :: ToDBWord (Sortable a) => Maybe (Sortable a) -> Int
+ival = fromIntegral . maybe maxBound toDBWord
 
 prop2Int :: Document a => Property a -> Int
 prop2Int = fromIntegral . fst . unProperty

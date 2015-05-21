@@ -1,14 +1,14 @@
 -----------------------------------------------------------------------------
 -- |
--- Module : Database.Muesli.State
--- Copyright : (C) 2015 Călin Ardelean,
--- License : MIT (see the file LICENSE)
+-- Module      : Database.Muesli.State
+-- Copyright   : (C) 2015 Călin Ardelean,
+-- License     : MIT (see the file LICENSE.md)
 --
--- Maintainer : Călin Ardelean <calinucs@gmail.com>
--- Stability : experimental
+-- Maintainer  : Călin Ardelean <calinucs@gmail.com>
+-- Stability   : experimental
 -- Portability : portable
 --
--- This module provides internal state types.
+-- The internal state of the database.
 ----------------------------------------------------------------------------
 
 module Database.Muesli.State
@@ -40,8 +40,6 @@ module Database.Muesli.State
   , Size
   , TID
   , DID
-  , IntValue
-  , PropID
   , mkNewId
   , reserveIdsRec
   , findUnique
@@ -65,12 +63,12 @@ newtype Handle = Handle { unHandle :: DBState } deriving (Eq)
 instance Show Handle where
   showsPrec p = showsPrec p . logFilePath . unHandle
 
-type Addr     = DBWord
-type TID      = DBWord
-type DID      = DBWord
-type IntValue = DBWord
-type Size     = DBWord
-type PropID   = DBWord
+type Addr   = DBWord
+type TID    = DBWord
+type DID    = DBWord
+type UnqVal = DBWord
+type Size   = DBWord
+type PropID = DBWord
 
 data DBState = DBState
   { logFilePath  :: FilePath
@@ -134,7 +132,7 @@ data DocReference = DocReference
 
 data IntReference = IntReference
   { irefPID :: !PropID
-  , irefVal :: !IntValue
+  , irefVal :: !DBWord
   } deriving (Show)
 
 data TRec = Pending DocRecord | Completed TID
@@ -162,7 +160,7 @@ mkNewId h = withMaster h $ \m ->
 reserveIdsRec :: IdSupply -> DocRecord -> IdSupply
 reserveIdsRec s r = Ids.reserve (docTID r) $ Ids.reserve (docID r) s
 
-findUnique :: IntValue -> IntValue -> [(DocRecord, a)] -> Maybe DID
+findUnique :: PropID -> UnqVal -> [(DocRecord, a)] -> Maybe DID
 findUnique p u rs = fmap docID . find findR $ map fst rs
   where findR = any (\i -> irefPID i == p && irefVal i == u) . docURefs
 

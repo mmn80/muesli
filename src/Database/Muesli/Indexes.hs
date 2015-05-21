@@ -1,14 +1,14 @@
 -----------------------------------------------------------------------------
 -- |
--- Module : Database.Muesli.Indexes
--- Copyright : (C) 2015 Călin Ardelean,
--- License : MIT (see the file LICENSE)
+-- Module      : Database.Muesli.Indexes
+-- Copyright   : (C) 2015 Călin Ardelean,
+-- License     : MIT (see the file LICENSE.md)
 --
--- Maintainer : Călin Ardelean <calinucs@gmail.com>
--- Stability : experimental
+-- Maintainer  : Călin Ardelean <calinucs@gmail.com>
+-- Stability   : experimental
 -- Portability : portable
 --
--- This module provides database indexes.
+-- Database indexes update functions.
 ----------------------------------------------------------------------------
 
 module Database.Muesli.Indexes
