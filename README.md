@@ -1,36 +1,39 @@
 muesli
 ======
 
-An easy to use [document-oriented database](https://en.wikipedia.org/wiki/Document-oriented_database)
-engine for Haskell.
+A simple [document-oriented database][nosql] engine for Haskell.
 
 Use cases
 ---------
-* higher capacity replacement for `acid-state`.
-* "no external dependency" replacement for `SQLite` and the like.
-* store for cloud/p2p nodes, mobile apps, etc.
+* store for p2p / cloud nodes, mobile apps, etc.
+* higher capacity replacement for *acid-state* (only indexes are held in memory).
+* "no external dependency" substitute for *SQLite*, *CouchDB* and the like
+(potentially easier to buid and use on mobile devices, or even port to *GHCJS*).
 
 Features
 --------
-* ACID transactions implemented on the [MVCC](https://en.wikipedia.org/wiki/Multiversion_concurrency_control) model.
-* automatic index management based on tags added to fields' types
+* **ACID transactions** implemented on the [MVCC][] model.
+* **automatic index management** based on tags added to fields' types
 (see example below).
-* no `TemplateHaskell`, all boilerplate internally generated with
-`GHC.Generics` and `deriving`.
-* only `Prelude` functions for file I/O, no dependencies on C libraries
-(mmap, kv stores, etc.)
-* simple monad for writing queries, with standard primitive operations like:
+* **minimal boilerplate**: instead of `TemplateHaskell` we use
+[`GHC.Generics`][gen] and [`deriving`][der].
+* **simple monad for writing queries**, with standard primitive operations like:
 `lookup`, `insert`, `update`, `delete`, `range`, `filter`.
 * most general type of query supported by the primitive ops (`filter`):
 ```SQL
 SELECT TOP p * FROM t WHERE c = k AND o < s ORDER BY o DESC
 ```
-* easy to reason about performance: all primitive queries run in **O(log n)**.
-* type-safety: impossible to attempt deserializing record at wrong type
+* **easy to reason about performance**: all primitive queries run in **O(log n)**.
+* **type-safety**: impossible to attempt deserializing a record at wrong type
 (or address), and risk getting bogus data with no error thrown.
 IDs are tagged with a phantom type and created only by the database.
 There are also `Num`/`Integral` instances to support more generic apps,
 but normally those are not needed.
+* only `Prelude` functions for file I/O, **no dependencies on C libraries**
+(mmap, kv stores, etc.)
+
+*Note: some of these features become misfeatures for certain scenarious when
+either a pure in-memory cache, or a "real" database may be more appropriate.*
 
 Example use
 -----------
@@ -112,43 +115,60 @@ flagIt h name email = runQuery h $ do
 
 main :: IO ()
 main = bracket
-    (do putStrLn "opening DB..."
-        open (Just "feeds.log") (Just "feeds.dat") )
-    (\h -> do
-        putStrLn "closing DB..."
-        close h )
-    (\h -> flagIt h "Bender Bending Rodríguez" "bender@ilovebender.com" )
+  (putStrLn "opening DB..." >> open (Just "blog.log") (Just "blog.dat"))
+  (\h -> putStrLn "closing DB..." >> close h)
+  (\h -> flagIt h "Bender Bending Rodríguez" "bender@ilovebender.com")
 
 ```
 
 TODO
 ----
-* expose the inverted index
-* queries that only return keys (no data file IO)
-* testing it on mobile devices
-* static property names, but no ugly `Proxy :: Proxy "FieldName"` stuff
-* support for extensible records ("lax" `Serialize` instance),
+- [ ] expose the inverted index
+- [ ] queries that only return keys (no data file IO)
+- [ ] blocking version of `runQuery`
+- [ ] testing it on mobile devices
+- [ ] static property names, but no ugly `Proxy :: Proxy "FieldName"` stuff
+- [ ] support for extensible records ("lax" `Serialize` instance),
 live up to the "document-oriented" label, but this should be optional
-* better migration story
-* radix tree / PATRICIA implementation for proper full-text search
+- [ ] better migration story
+- [ ] radix tree / PATRICIA implementation for proper full-text search
 (currently indexing strings just takes first 4 chars and turnes them into an int,
 which is good enough for simple sorting)
-* replication
-* fancy query language
-* waiting some more for [`OverloadedRecordFields`](https://ghc.haskell.org/trac/ghc/wiki/Records/OverloadedRecordFields)
+- [ ] replication
+- [ ] more advanced & flexible index system supporting complex indexes
+- [ ] fancy query language
+- [x] waiting for [`OverloadedRecordFields`][orf]
 
 Implementation
 --------------
 * 2 files, one for transactions/indexes, and another for serialized data
 * same file format for transactions and indexes, loading indexes is
 the same as replaying transactions
-* transaction records only contain int keys
+* transaction file only contains int keys extracted from tagged fields
+* processing a record (updating indexes) while loading the log is **O(log n)**
+* previous 2 points make the initial loading much faster and using significantly
+less memory then *acid-state*, which serializes entire records, including
+potentially very large string fields, typical in "document-oriented" scenarious.
+It was suggested that in such cases you should hold this data in external files.
+But then, if you want to regain the ACID property, and already have some indexes
+laying aroung, you are well on your way of creating *muesli*.
 * data file only contains serialized records and gaps, no metadata
 * LRU cache holds deserialized objects wrapped in `Data.Dynamic`
-* GC creates asynchronously new copies of both files, doing cleanup and
+(on SSDs deserialization is far more costly than file IO,
+so having our own cache is a better solution than just memory mapping the file)
+* :recycle: GC creates asynchronously new copies of both files, doing cleanup and
 compaction, and only locks the world at the end
-* all locks are held for at most **O(log n)** time
+* :lock: all locks are held for at most **O(log n)** time
+* `DocID`, `Unique` and `Indexable` are `newtype`s that have a set of general
+instances for `DBValue` and `Document` which are used by a [generic function][gen]
 * transactions defer updates by collecting IDs and serialized data,
 which are checked (under lock) for consistency at the end
 
-See the [notes](https://github.com/clnx/muesli/blob/master/Notes.md).
+See the early [notes][].
+
+[nosql]: https://en.wikipedia.org/wiki/Document-oriented_database "Document-oriented database - Wikipedia"
+[MVCC]: https://en.wikipedia.org/wiki/Multiversion_concurrency_control "Multiversion concurrency control - Wikipedia"
+[gen]: https://downloads.haskell.org/~ghc/latest/docs/html/users_guide/generic-programming.html "Generic Programming - GHC User's Guide"
+[der]: https://downloads.haskell.org/~ghc/latest/docs/html/users_guide/deriving.html "Extensions to the deriving mechanism - GHC User's Guide"
+[orf]: https://ghc.haskell.org/trac/ghc/wiki/Records/OverloadedRecordFields "Overloaded Record Fields - GHC Wiki"
+[notes]: https://github.com/clnx/muesli/blob/master/Notes.md "Muesli Implementation Notes"

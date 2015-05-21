@@ -11,11 +11,17 @@ author:              Călin Ardelean
 maintainer:          Călin Ardelean <calinucs@gmail.com>
 copyright:           Copyright (C) 2015 Călin Ardelean
 license:             MIT
-license-file:        LICENSE
+license-file:        LICENSE.md
 stability:           experimental
 build-type:          Simple
 cabal-version:       >=1.10
-extra-source-files:  README.md
+extra-source-files:
+  README.md
+  CHANGELOG.md
+
+source-repository head
+  type:     git
+  location: https://github.com/clnx/muesli.git
 
 library
   exposed-modules:
