@@ -130,9 +130,12 @@ instance ToDBWord (Sortable UTCTime) where
 
 instance {-# OVERLAPPABLE #-} Show a => ToDBWord (Sortable a) where
   toDBWord (Sortable a) = snd $ foldl' f (ws - 1, 0) bytes
-    where bytes = (fromIntegral . fromEnum <$> take ws (show a)) :: [Word8]
+    where bytes = (fromIntegral . fromEnum <$> take ws str) :: [Word8]
           f (n, v) b = (n - 1, if n >= 0 then v + fromIntegral b * 2 ^ (8 * n) else v)
           ws = sizeOf (0 :: DBWord)
+          str = case show a of
+                  '"':as -> as
+                  ss     -> ss
 
 newtype Unique a = Unique { unUnique :: a }
   deriving (Eq, Serialize)
