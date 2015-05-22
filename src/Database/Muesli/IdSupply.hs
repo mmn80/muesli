@@ -27,13 +27,13 @@ import           Database.Muesli.Types (DBWord, DatabaseError (..))
 
 type IdSupply = IntMap Size
 
-type TID      = DBWord
+type DID      = DBWord
 type Size     = DBWord
 
 empty :: IdSupply
 empty = Map.singleton 1 (maxBound - 1)
 
-reserve :: TID -> IdSupply -> IdSupply
+reserve :: DID -> IdSupply -> IdSupply
 reserve tidb s = maybe s
   (\(st, szdb) ->
       let sz = fromIntegral szdb in
@@ -48,7 +48,7 @@ reserve tidb s = maybe s
   (Map.lookupLE tid s)
   where tid = fromIntegral tidb
 
-alloc :: IdSupply -> (TID, IdSupply)
+alloc :: IdSupply -> (DID, IdSupply)
 alloc s =
   case Map.lookupGE 0 s of
     Nothing -> throw $ IdAllocationError "ID allocation error: supply empty."

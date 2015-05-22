@@ -17,9 +17,11 @@ module Database.Muesli.GC
 import           Control.Concurrent        (threadDelay)
 import           Control.Monad             (forM_, unless, when)
 import           Data.Function             (on)
-import           Data.IntMap.Strict        ((\\))
-import qualified Data.IntMap.Strict        as Map
+import           Data.IntMap.Strict        (IntMap)
+import qualified Data.IntMap.Strict        as IntMap
 import           Data.List                 (foldl', groupBy, sortOn)
+import           Data.Map.Strict           ((\\))
+import qualified Data.Map.Strict           as Map
 import qualified Database.Muesli.Allocator as Gaps
 import qualified Database.Muesli.IdSupply  as Ids
 import           Database.Muesli.Indexes
@@ -36,12 +38,12 @@ gcThread h = do
     when (sgn == PerformGC) $ do
       (mainIdxOld, logCompOld) <- withMaster h $ \m ->
         return (m { keepTrans = True }, (mainIdx m, logComp m))
-      let rs  = map head . filter (not . any docDel) $ Map.elems mainIdxOld
+      let rs  = map head . filter (not . any docDel) $ IntMap.elems mainIdxOld
       let (rs2, dpos) = realloc 0 rs
       let rs' = sortOn docTID $ map fst rs2
       let ts  = concatMap toTRecs $ groupBy ((==) `on` docTID) rs'
-      let ids = foldl' reserveIdsRec Ids.empty . map fromPending $
-                filter isPending ts
+      let ids = foldl' (\s r -> Ids.reserve (docID r) s) Ids.empty .
+                map fromPending $ filter isPending ts
       let pos = sum $ tRecSize <$> ts
       let logPath = logFilePath (unHandle h)
       let logPathNew = logPath ++ ".new"
@@ -49,10 +51,10 @@ gcThread h = do
       let dataPath = dataFilePath (unHandle h)
       let dataPathNew = dataPath ++ ".new"
       IO.withBinaryFile dataPathNew IO.ReadWriteMode $ writeData rs2 dpos h
-      let mIdx = updateMainIdx Map.empty rs'
-      let uIdx = updateUnqIdx  Map.empty rs'
-      let iIdx = updateIntIdx  Map.empty rs'
-      let rIdx = updateRefIdx  Map.empty rs'
+      let mIdx = updateMainIdx IntMap.empty rs'
+      let uIdx = updateUnqIdx  IntMap.empty rs'
+      let iIdx = updateIntIdx  IntMap.empty rs'
+      let rIdx = updateRefIdx  IntMap.empty rs'
       when (forceEval mIdx iIdx rIdx) $ withUpdateMan h $ \kill -> do
         withMaster h $ \nm -> do
           let (ncrs', dpos') = realloc dpos . concat . Map.elems $
@@ -76,6 +78,7 @@ gcThread h = do
           let m = MasterState { logHandle = hnd
                               , logPos    = fromIntegral pos'
                               , logSize   = fromIntegral sz'
+                              , topTID    = topTID nm
                               , idSupply  = ids
                               , keepTrans = False
                               , gaps      = gs
@@ -125,14 +128,14 @@ realloc st = foldl' f ([], st)
           if docDel r then ((r, r) : nrs, pos)
           else ((r { docAddr = pos }, r) : nrs, pos + docSize r)
 
-realloc' :: Addr -> Map.IntMap [(DocRecord, b)] -> (Map.IntMap [(DocRecord, b)], Addr)
+realloc' :: Addr -> LogPending -> (LogPending, Addr)
 realloc' st idx = (Map.fromList l, pos)
   where (l, pos) = foldl' f ([], st) $ Map.toList idx
         f (lst, p) (tid, rs) = ((tid, rs') : lst, p')
           where (rss', p') = realloc p $ fst <$> rs
                 rs' = (fst <$> rss') `zip` (snd <$> rs)
 
-forceEval :: Map.IntMap a -> Map.IntMap b -> Map.IntMap c -> Bool
-forceEval mIdx iIdx rIdx = Map.notMember (-1) mIdx &&
-                           Map.size iIdx > (-1) &&
-                           Map.size rIdx > (-1)
+forceEval :: IntMap a -> IntMap b -> IntMap c -> Bool
+forceEval mIdx iIdx rIdx = IntMap.notMember (-1) mIdx &&
+                           IntMap.size iIdx > (-1) &&
+                           IntMap.size rIdx > (-1)

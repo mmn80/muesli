@@ -24,7 +24,8 @@ module Database.Muesli.Handle
 import           Control.Concurrent        (forkIO, newMVar)
 import           Control.Monad.Trans       (MonadIO (liftIO))
 import qualified Data.ByteString           as B
-import qualified Data.IntMap.Strict        as Map
+import qualified Data.IntMap.Strict        as IntMap
+import qualified Data.Map.Strict           as Map
 import           Data.Maybe                (fromMaybe)
 import qualified Database.Muesli.Allocator as Gaps
 import qualified Database.Muesli.Cache     as Cache
@@ -53,15 +54,16 @@ open lf df = do
   let m = MasterState { logHandle = lfh
                       , logPos    = pos
                       , logSize   = lsz
+                      , topTID    = 0
                       , idSupply  = Ids.empty
                       , keepTrans = False
                       , gaps      = Gaps.empty 0
                       , logPend   = Map.empty
                       , logComp   = Map.empty
-                      , mainIdx   = Map.empty
-                      , unqIdx    = Map.empty
-                      , intIdx    = Map.empty
-                      , refIdx    = Map.empty
+                      , mainIdx   = IntMap.empty
+                      , unqIdx    = IntMap.empty
+                      , intIdx    = IntMap.empty
+                      , refIdx    = IntMap.empty
                       }
   m' <- if pos > fromIntegral (sizeOf pos)
         then readLog m (sizeOf pos)
@@ -92,19 +94,21 @@ readLog m pos = do
   ln <- readLogTRec h
   m' <- case ln of
           Pending r ->
-            let tid = fromIntegral $ docTID r in
-            let ids = reserveIdsRec (idSupply m) r in
+            let tid = docTID r in
+            let ids = Ids.reserve (docID r) (idSupply m) in
             case Map.lookup tid l of
-              Nothing -> return m { idSupply = ids
+              Nothing -> return m { topTID   = max tid (topTID m)
+                                  , idSupply = ids
                                   , logPend  = Map.insert tid [(r, B.empty)] l }
-              Just rs -> return m { idSupply = ids
+              Just rs -> return m { topTID   = max tid (topTID m)
+                                  , idSupply = ids
                                   , logPend  = Map.insert tid ((r, B.empty):rs) l }
           Completed tid ->
-            case Map.lookup (fromIntegral tid) l of
+            case Map.lookup tid l of
               Nothing -> logError h $ showString "Completed TID:" . shows tid .
                 showString " found but transaction did not previously occur."
               Just rps -> let rs = fst <$> rps in
-                          return m { logPend  = Map.delete (fromIntegral tid) l
+                          return m { logPend  = Map.delete tid l
                                    , mainIdx  = updateMainIdx (mainIdx m) rs
                                    , unqIdx   = updateUnqIdx (unqIdx m) rs
                                    , intIdx   = updateIntIdx (intIdx m) rs
@@ -120,8 +124,9 @@ performGC h = withGC h . const $ return (PerformGC, ())
 debug :: MonadIO m => Handle -> Bool -> Bool -> m String
 debug h sIdx sCache = do
   mstr <- withMasterLock h $ \m -> return $
-    showsH   "logPos    : " (logPos m) .
-    showsH "\nlogSize   : " (logSize m) .
+    showsH   "logPos    : "    (logPos m) .
+    showsH "\nlogSize   : "    (logSize m) .
+    showsH "\ntopTID    : "    (topTID m) .
     showsH "\nidSupply  :\n  " (idSupply m) .
     showsH "\nlogPend   :\n  " (logPend m) .
     showsH "\nlogComp   :\n  " (logComp m) .

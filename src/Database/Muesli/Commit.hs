@@ -30,9 +30,10 @@ import qualified Control.Monad.State       as S
 import           Control.Monad.Trans       (MonadIO (liftIO))
 import           Data.ByteString           (ByteString)
 import           Data.Function             (on)
-import qualified Data.IntMap.Strict        as Map
+import qualified Data.IntMap.Strict        as IntMap
 import           Data.List                 (foldl')
 import qualified Data.List                 as L
+import qualified Data.Map.Strict           as Map
 import           Data.Maybe                (fromMaybe)
 import qualified Database.Muesli.Allocator as Gaps
 import qualified Database.Muesli.Cache     as Cache
@@ -66,7 +67,7 @@ instance Exception TransactionAbort
 runQuery :: MonadIO m => Handle -> Transaction m a ->
             m (Either TransactionAbort a)
 runQuery h (Transaction t) = do
-  tid <- mkNewId h
+  tid <- mkNewTransId h
   (a, q, u) <- runUserCode tid
   if null u then return $ Right a
   else withMaster h $ \m ->
@@ -84,7 +85,7 @@ runQuery h (Transaction t) = do
            let m' = m { logPos  = fromIntegral pos
                       , logSize = fromIntegral lsz
                       , gaps    = gs
-                      , logPend = Map.insert (fromIntegral tid) ts $ logPend m
+                      , logPend = Map.insert tid ts $ logPend m
                       }
            writeTransactions m ts
            writeLogPos (logHandle m) $ fromIntegral pos
@@ -104,8 +105,8 @@ runQuery h (Transaction t) = do
     checkUnique u idx logp = all ck u
       where ck (d, _) = docDel d || all (cku $ docID d) (docURefs d)
             cku did (IntReference pid val) =
-              cku' did (liftM fromIntegral $ Map.lookup (fromIntegral pid) idx >>=
-                                             Map.lookup (fromIntegral val)) &&
+              cku' did (liftM fromIntegral $ IntMap.lookup (fromIntegral pid) idx >>=
+                                             IntMap.lookup (fromIntegral val)) &&
               cku' did (findUnique pid val (concat $ Map.elems logp))
             cku' did = maybe True (== did)
 
@@ -116,17 +117,17 @@ runQuery h (Transaction t) = do
         ck lst = Map.null (Map.intersection newPs ml) &&
                  Map.null (Map.intersection newCs ml)
           where ml = Map.fromList lst
-        newPs = snd $ Map.split (fromIntegral tid) logp
-        newCs = snd $ Map.split (fromIntegral tid) logc
+        newPs = snd $ Map.split tid logp
+        newCs = snd $ Map.split tid logc
 
     checkDelete m u = all ck . L.filter docDel $ map fst u
       where ck d = all (ckEmpty $ fromIntegral did) lst && all (ckPnd did) rs
               where did = docID d
-            lst = Map.elems $ refIdx m
+            lst = IntMap.elems $ refIdx m
             ckEmpty did idx =
-              case Map.lookup did idx of
+              case IntMap.lookup did idx of
                 Nothing -> True
-                Just ss -> all null $ Map.elems ss
+                Just ss -> all null $ IntMap.elems ss
             rs = L.filter (not . docDel) . map fst . concat . Map.elems $ logPend m
             ckPnd did r = not . any ((did ==) . drefDID) $ docDRefs r
 
@@ -161,7 +162,7 @@ updateManThread h w = do
           return (DataState hnd cache', ())
         withMaster h $ \m -> do
           let rs' = fst <$> rs
-          let trec = Completed $ fromIntegral tid
+          let trec = Completed tid
           let pos = fromIntegral (logPos m) + tRecSize trec
           lsz <- checkLogSize (logHandle m) (fromIntegral (logSize m)) pos
           logSeek m

@@ -20,6 +20,8 @@ module Database.Muesli.State
   , FilterIndex
   , UniqueIndex
   , Gaps
+  , LogPending
+  , LogCompleted
   , DataState (..)
   , GCState (..)
   , withMaster
@@ -40,8 +42,8 @@ module Database.Muesli.State
   , Size
   , TID
   , DID
-  , mkNewId
-  , reserveIdsRec
+  , mkNewTransId
+  , mkNewDocId
   , findUnique
   ) where
 
@@ -52,6 +54,8 @@ import           Data.ByteString          (ByteString)
 import           Data.IntMap.Strict       (IntMap)
 import           Data.IntSet              (IntSet)
 import           Data.List                (find)
+import           Data.Map.Strict          (Map)
+import           Data.Word                (Word64)
 import           Database.Muesli.Cache    (LRUCache)
 import           Database.Muesli.IdSupply (IdSupply)
 import qualified Database.Muesli.IdSupply as Ids
@@ -64,12 +68,12 @@ newtype Handle = Handle { unHandle :: DBState } deriving (Eq)
 instance Show Handle where
   showsPrec p = showsPrec p . logFilePath . unHandle
 
-type Addr   = DBWord
-type TID    = DBWord
+type TID    = Word64
 type DID    = DBWord
 type UnqVal = DBWord
-type Size   = DBWord
 type PropID = DBWord
+type Addr   = DBWord
+type Size   = DBWord
 
 data DBState = DBState
   { logFilePath  :: FilePath
@@ -93,15 +97,20 @@ type UniqueIndex = IntMap (IntMap Int)
 
 type Gaps = IntMap [Addr]
 
+type LogPending = Map TID [(DocRecord, ByteString)]
+
+type LogCompleted = Map TID [DocRecord]
+
 data MasterState = MasterState
   { logHandle :: IO.Handle
   , logPos    :: !Addr
   , logSize   :: !Size
+  , topTID    :: !TID
   , idSupply  :: !IdSupply
   , keepTrans :: !Bool
   , gaps      :: !Gaps
-  , logPend   :: !(IntMap [(DocRecord, ByteString)])
-  , logComp   :: !(IntMap [DocRecord])
+  , logPend   :: !LogPending
+  , logComp   :: !LogCompleted
   , mainIdx   :: !MainIndex
   , unqIdx    :: !UniqueIndex
   , intIdx    :: !SortIndex
@@ -148,19 +157,21 @@ fromPending (Pending r) = r
 
 tRecSize :: TRec -> Int
 tRecSize r = case r of
-  Pending dr  -> 8 + ws * (4 + (2 * length (docURefs dr)) +
-                               (2 * length (docIRefs dr)) +
-                               (2 * length (docDRefs dr)))
-  Completed _ -> 1 + ws
+  Pending dr  -> 16 + ws * (3 + 2 * (length (docURefs dr) +
+                                     length (docIRefs dr) +
+                                     length (docDRefs dr)))
+  Completed _ -> 9
   where ws = sizeOf (0 :: DBWord)
 
-mkNewId :: MonadIO m => Handle -> m TID
-mkNewId h = withMaster h $ \m ->
+mkNewTransId :: MonadIO m => Handle -> m TID
+mkNewTransId h = withMaster h $ \m ->
+  let tid = topTID m + 1 in
+  return (m { topTID = tid }, tid)
+
+mkNewDocId :: MonadIO m => Handle -> m DID
+mkNewDocId h = withMaster h $ \m ->
   let (tid, s) = Ids.alloc (idSupply m) in
   return (m { idSupply = s }, tid)
-
-reserveIdsRec :: IdSupply -> DocRecord -> IdSupply
-reserveIdsRec s r = Ids.reserve (docTID r) $ Ids.reserve (docID r) s
 
 findUnique :: PropID -> UnqVal -> [(DocRecord, a)] -> Maybe DID
 findUnique p u rs = fmap docID . find findR $ map fst rs

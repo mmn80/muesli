@@ -32,17 +32,19 @@ module Database.Muesli.Query
   , size
   ) where
 
+import           Control.Applicative    ((<|>))
 import           Control.Exception      (throw)
-import           Control.Monad          (forM, liftM, mplus)
+import           Control.Monad          (forM, liftM)
 import qualified Control.Monad.State    as S
 import           Control.Monad.Trans    (MonadIO (liftIO))
 import           Data.ByteString        (ByteString)
 import qualified Data.ByteString        as B
 import           Data.IntMap.Strict     (IntMap)
-import qualified Data.IntMap.Strict     as Map
+import qualified Data.IntMap.Strict     as IntMap
 import           Data.IntSet            (IntSet)
 import qualified Data.IntSet            as Set
 import qualified Data.List              as L
+import qualified Data.Map.Strict        as Map
 import           Data.Maybe             (fromMaybe)
 import           Data.Serialize         (Serialize (..), decode, encode)
 import           Data.String            (IsString (..))
@@ -73,8 +75,8 @@ findFirstDoc :: MasterState -> TransactionState -> DID ->
 findFirstDoc m t did = do
   (r, mbs) <- liftM (fmap Just)
                     (L.find ((== did) . docID . fst) (transUpdateList t))
-      `mplus` liftM (, Nothing)
-                    (Map.lookup (fromIntegral did) (mainIdx m) >>=
+          <|> liftM (, Nothing)
+                    (IntMap.lookup (fromIntegral did) (mainIdx m) >>=
                      L.find ((<= transTID t) . docTID))
   if docDel r then Nothing else Just (r, mbs)
 
@@ -85,9 +87,9 @@ lookupUnique p ub = Transaction $ do
   let u = toDBWord ub
   withMasterLock (transHandle t) $ \m -> return . liftM Reference $
     findUnique pp u (transUpdateList t)
-    `mplus` (findUnique pp u . concat . Map.elems $ logPend m)
-    `mplus` liftM fromIntegral (Map.lookup (fromIntegral pp) (unqIdx m) >>=
-                                Map.lookup (fromIntegral u))
+    <|> (findUnique pp u . concat . Map.elems $ logPend m)
+    <|> liftM fromIntegral (IntMap.lookup (fromIntegral pp) (unqIdx m) >>=
+                            IntMap.lookup (fromIntegral u))
   where pp = fst $ unProperty p
 
 updateUnique :: (Document a, ToDBWord (Unique b), MonadIO m) =>
@@ -98,7 +100,8 @@ updateUnique p u a = do
     Nothing  -> insert a
     Just did -> update did a >> return did
 
-update :: forall a m. (Document a, MonadIO m) => Reference a -> a -> Transaction m ()
+update :: forall a m. (Document a, MonadIO m) =>
+          Reference a -> a -> Transaction m ()
 update did a = Transaction $ do
   t <- S.get
   let bs = encode a
@@ -121,9 +124,9 @@ update did a = Transaction $ do
 insert :: (Document a, MonadIO m) => a -> Transaction m (Reference a)
 insert a = Transaction $ do
   t <- S.get
-  tid <- mkNewId $ transHandle t
-  unTransaction $ update (Reference tid) a
-  return $ Reference tid
+  did <- mkNewDocId $ transHandle t
+  unTransaction $ update (Reference did) a
+  return $ Reference did
 
 delete :: MonadIO m => Reference a -> Transaction m ()
 delete (Reference did) = Transaction $ do
@@ -134,8 +137,8 @@ delete (Reference did) = Transaction $ do
                     , docURefs = maybe [] (docURefs . fst) mb
                     , docIRefs = maybe [] (docIRefs . fst) mb
                     , docDRefs = maybe [] (docDRefs . fst) mb
-                    , docAddr  = maybe 0 (docAddr . fst) mb
-                    , docSize  = maybe 0 (docSize . fst) mb
+                    , docAddr  = maybe 0  (docAddr  . fst) mb
+                    , docSize  = maybe 0  (docSize  . fst) mb
                     , docDel   = True
                     }
   S.put t { transUpdateList = (r, B.empty) : transUpdateList t }
@@ -160,7 +163,7 @@ range :: (Document a, ToDBWord (Sortable b), MonadIO m) => Maybe (Sortable b) ->
          Transaction m [(Reference a, a)]
 range mst msti p pg = page_ f mst
   where f st m = fromMaybe [] $ do
-                   ds <- Map.lookup (prop2Int p) (intIdx m)
+                   ds <- IntMap.lookup (prop2Int p) (intIdx m)
                    return $ getPage st (rval msti) pg ds
 
 filter :: (Document a, ToDBWord (Sortable b), MonadIO m) => Maybe (Reference c) ->
@@ -168,9 +171,9 @@ filter :: (Document a, ToDBWord (Sortable b), MonadIO m) => Maybe (Reference c) 
           Property a -> Int -> Transaction m [(Reference a, a)]
 filter mdid mst msti fprop sprop pg = page_ f mst
   where f _ m = fromMaybe [] . liftM (getPage (ival mst) (rval msti) pg) $
-                  Map.lookup (fromIntegral . fst . unProperty $ fprop) (refIdx m) >>=
-                  Map.lookup (fromIntegral $ maybe 0 unReference mdid) >>=
-                  Map.lookup (prop2Int sprop)
+                  IntMap.lookup (fromIntegral . fst . unProperty $ fprop) (refIdx m) >>=
+                  IntMap.lookup (fromIntegral $ maybe 0 unReference mdid) >>=
+                  IntMap.lookup (prop2Int sprop)
 
 pageK_ :: (MonadIO m, ToDBWord (Sortable b)) => (Int -> MasterState -> [Int]) ->
           Maybe (Sortable b) -> Transaction m [Reference a]
@@ -186,13 +189,13 @@ rangeK :: (Document a, ToDBWord (Sortable b), MonadIO m) => Maybe (Sortable b) -
           Maybe (Reference a) -> Property a -> Int -> Transaction m [Reference a]
 rangeK mst msti p pg = pageK_ f mst
   where f st m = fromMaybe [] $ getPage st (rval msti) pg <$>
-                                Map.lookup (prop2Int p) (intIdx m)
+                                IntMap.lookup (prop2Int p) (intIdx m)
 
 getPage :: Int -> Int -> Int -> IntMap IntSet -> [Int]
 getPage sta sti pg idx = go sta pg []
   where go st p acc =
           if p == 0 then acc
-          else case Map.lookupLT st idx of
+          else case IntMap.lookupLT st idx of
                  Nothing      -> acc
                  Just (n, is) ->
                    let (p', ids) = getPage2 sti p is in
@@ -211,7 +214,7 @@ size :: (Document a, MonadIO m) => Property a -> Transaction m Int
 size p = Transaction $ do
   t <- S.get
   withMasterLock (transHandle t) $ \m -> return . fromMaybe 0 $
-    (sum . map (Set.size . snd) . Map.toList) <$> Map.lookup (prop2Int p) (intIdx m)
+    (sum . map (Set.size . snd) . IntMap.toList) <$> IntMap.lookup (prop2Int p) (intIdx m)
 
 rval :: Maybe (Reference a) -> Int
 rval = fromIntegral . unReference . fromMaybe maxBound
