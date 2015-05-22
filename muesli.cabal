@@ -1,10 +1,19 @@
 name:                muesli
 category:            Database
 version:             0.1.0.0
-synopsis:            Document-oriented MVCC database engine
+synopsis:            A simple document-oriented database
 description:
-  An easy to use MVCC document-oriented database engine
+  `muesli` is an easy to use
+  <https://en.wikipedia.org/wiki/Multiversion_concurrency_control MVCC>
+  <https://en.wikipedia.org/wiki/Document-oriented_database document-oriented database>
   featuring automatic index management and minimal boilerplate.
+  .
+  Import the "Database.Muesli.Types" module to mark up your types for indexing,
+  "Database.Muesli.Query" for writing and running queries,
+  and "Database.Muesli.Handle" for database management.
+  The rest of the modules are internal, but exposed just in case.
+  .
+  See the README file for an usage example.
 homepage:            https://github.com/clnx/muesli
 bug-reports:         https://github.com/clnx/muesli/issues
 author:              Călin Ardelean

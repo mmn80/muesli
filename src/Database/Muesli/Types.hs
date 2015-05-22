@@ -7,6 +7,8 @@
 {-# LANGUAGE TypeOperators              #-}
 {-# LANGUAGE UndecidableInstances       #-}
 
+{-# OPTIONS_HADDOCK show-extensions #-}
+
 -----------------------------------------------------------------------------
 -- |
 -- Module      : Database.Muesli.Types
@@ -22,19 +24,19 @@
 
 module Database.Muesli.Types
   (
--- * General
-    IxKey (..)
-  , ToKey (..)
-  , DatabaseError (..)
-  , Property (..)
+-- * Indexable value wrappers
+    Reference (..)
+  , Sortable (..)
+  , Unique (..)
 -- * Main classes
   , Indexable (..)
   , Document (..)
   , Indexables (..)
--- * Indexable value wrappers
-  , Reference (..)
-  , Sortable (..)
-  , Unique (..)
+-- * Other
+  , IxKey (..)
+  , ToKey (..)
+  , Property (..)
+  , DatabaseError (..)
   ) where
 
 import           Control.Exception     (Exception)
@@ -56,23 +58,23 @@ import           Numeric               (showHex)
 
 -- | Type for exceptions thrown by the database.
 -- During normal operation these should never be thrown.
-data DatabaseError =
--- | Thrown when the log file is corrupted.
--- Holds file position and a message.
-                     LogParseError Int String
--- | Thrown after deserialization errors.
--- Holds starting position, size, and a message.
-                   | DataParseError Int Int String
--- | ID allocation failure. For instance, full address space.
-                   | IdAllocationError String
--- | Data allocation failure.
--- Containes the size requested, the biggest available gap, and a message.
-                   | DataAllocationError Int (Maybe Int) String
+data DatabaseError
+  -- | Thrown when the log file is corrupted.
+  -- Holds file position and a message.
+  = LogParseError Int String
+  -- | Thrown after deserialization errors.
+  -- Holds starting position, size, and a message.
+  | DataParseError Int Int String
+  -- | ID allocation failure. For instance, full address space.
+  | IdAllocationError String
+  -- | Data allocation failure.
+  -- Containes the size requested, the biggest available gap, and a message.
+  | DataAllocationError Int (Maybe Int) String
   deriving (Show)
 
 instance Exception DatabaseError
 
--- | The internal type used to read/write in the log file.
+-- | Used inside the index and as argument to query primitives.
 newtype IxKey = IxKey { unIxKey :: Int }
   deriving (Eq, Ord, Bounded, Num, Enum, Real, Integral,
             Bits, FiniteBits, Storable, Serialize)
@@ -80,16 +82,12 @@ newtype IxKey = IxKey { unIxKey :: Int }
 instance Show IxKey where
   showsPrec p = showsPrec p . unIxKey
 
-type PropID = IxKey
-type DID    = IxKey
-type UnqVal = IxKey
-
 class ToKey a where
   toKey :: a -> IxKey
 
 -- Properties ------------------------------------------------------------------
 
-newtype Property a = Property { unProperty :: (PropID, String) }
+newtype Property a = Property { unProperty :: (IxKey, String) }
 
 instance Eq (Property a) where
   Property (pid, _) == Property (pid', _) = pid == pid'
@@ -104,7 +102,7 @@ instance Typeable a => IsString (Property a) where
 
 -- Values ----------------------------------------------------------------------
 
-newtype Reference a = Reference { unReference :: DID }
+newtype Reference a = Reference { unReference :: IxKey }
   deriving (Eq, Ord, Bounded, Num, Enum, Real, Integral, Serialize)
 
 instance Show (Reference a) where
@@ -156,7 +154,7 @@ class Indexable a where
   isReference :: Proxy a -> Bool
   isReference _ = False
 
-  getUnique :: a -> Maybe UnqVal
+  getUnique :: a -> Maybe IxKey
   getUnique _ = Nothing
 
 instance Indexable (Reference a) where
@@ -190,9 +188,9 @@ instance {-# OVERLAPPABLE #-} Hashable a => Indexable (Unique a) where
 -- Records ---------------------------------------------------------------------
 
 data Indexables = Indexables
-  { ixRefs :: [(String, DID)]
-  , ixInts :: [(String, DID)]
-  , ixUnqs :: [(String, UnqVal)]
+  { ixRefs :: [(String, IxKey)]
+  , ixInts :: [(String, IxKey)]
+  , ixUnqs :: [(String, IxKey)]
   } deriving (Show)
 
 class (Typeable a, Generic a, Serialize a) => Document a where
