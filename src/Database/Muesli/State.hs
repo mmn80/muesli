@@ -56,6 +56,7 @@ import           Database.Muesli.Cache    (LRUCache)
 import           Database.Muesli.IdSupply (IdSupply)
 import qualified Database.Muesli.IdSupply as Ids
 import           Database.Muesli.Types
+import           Foreign                  (sizeOf)
 import qualified System.IO                as IO
 
 newtype Handle = Handle { unHandle :: DBState } deriving (Eq)
@@ -147,10 +148,11 @@ fromPending (Pending r) = r
 
 tRecSize :: TRec -> Int
 tRecSize r = case r of
-  Pending dr  -> 9 + (2 * length (docURefs dr)) +
-                     (2 * length (docIRefs dr)) +
-                     (2 * length (docDRefs dr))
-  Completed _ -> 2
+  Pending dr  -> 8 + ws * (4 + (2 * length (docURefs dr)) +
+                               (2 * length (docIRefs dr)) +
+                               (2 * length (docDRefs dr)))
+  Completed _ -> 1 + ws
+  where ws = sizeOf (0 :: DBWord)
 
 mkNewId :: MonadIO m => Handle -> m TID
 mkNewId h = withMaster h $ \m ->

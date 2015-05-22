@@ -24,7 +24,6 @@ module Database.Muesli.Types
   (
 -- * General
     DBWord (..)
-  , dbWordSize
   , ToDBWord (..)
   , DatabaseError (..)
   , Property (..)
@@ -39,18 +38,17 @@ module Database.Muesli.Types
   ) where
 
 import           Control.Exception     (Exception)
-import           Data.Bits             (Bits, FiniteBits (..))
+import           Data.Bits             (Bits, FiniteBits)
 import           Data.Hashable         (Hashable, hash)
 import           Data.List             (foldl')
 import           Data.Maybe            (fromJust)
 import           Data.Serialize        (Serialize (..))
-import           Data.Serialize.Get    (getWord32be)
-import           Data.Serialize.Put    (putWord32be)
 import           Data.String           (IsString (..))
 import           Data.Time.Clock       (UTCTime)
 import           Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import           Data.Typeable         (Proxy (..), Typeable, typeRep)
-import           Data.Word             (Word32, Word8)
+import           Data.Word             (Word8)
+import           Foreign               (Storable, sizeOf)
 import           GHC.Generics          ((:*:) (..), (:+:) (..), C, D, Generic,
                                         K1 (..), M1 (..), Rep, S, Selector,
                                         U1 (..), from, selName)
@@ -75,20 +73,12 @@ data DatabaseError =
 instance Exception DatabaseError
 
 -- | The internal type used to read/write in the log file.
--- The @Serialize@ instance uses a big endian encoding.
-newtype DBWord = DBWord { unDBWord :: Word32 }
-  deriving (Eq, Ord, Bounded, Num, Enum, Real, Integral, Bits, FiniteBits)
-
-instance Serialize DBWord where
-  put = putWord32be . unDBWord
-  get = DBWord <$> getWord32be
+newtype DBWord = DBWord { unDBWord :: Int }
+  deriving (Eq, Ord, Bounded, Num, Enum, Real, Integral,
+            Bits, FiniteBits, Storable, Serialize)
 
 instance Show DBWord where
   showsPrec p = showsPrec p . unDBWord
-
--- | Internal. Returns the size in bytes of @DBWord@.
-dbWordSize :: Int
-dbWordSize = finiteBitSize (0 :: DBWord) `div` 8
 
 type PropID = DBWord
 type DID    = DBWord
@@ -139,9 +129,10 @@ instance ToDBWord (Sortable UTCTime) where
   toDBWord (Sortable t) = round $ utcTimeToPOSIXSeconds t
 
 instance {-# OVERLAPPABLE #-} Show a => ToDBWord (Sortable a) where
-  toDBWord (Sortable a) = snd $ foldl' f (dbWordSize - 1, 0) bytes
-    where bytes = (fromIntegral . fromEnum <$> take dbWordSize (show a)) :: [Word8]
+  toDBWord (Sortable a) = snd $ foldl' f (ws - 1, 0) bytes
+    where bytes = (fromIntegral . fromEnum <$> take ws (show a)) :: [Word8]
           f (n, v) b = (n - 1, if n >= 0 then v + fromIntegral b * 2 ^ (8 * n) else v)
+          ws = sizeOf (0 :: DBWord)
 
 newtype Unique a = Unique { unUnique :: a }
   deriving (Eq, Serialize)

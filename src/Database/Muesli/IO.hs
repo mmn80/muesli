@@ -1,3 +1,5 @@
+{-# LANGUAGE ScopedTypeVariables #-}
+
 -----------------------------------------------------------------------------
 -- |
 -- Module      : Database.Muesli.IO
@@ -29,47 +31,45 @@ import           Control.Arrow         ((&&&))
 import           Control.Exception     (throw)
 import           Control.Monad         (forM_, replicateM, unless)
 import           Control.Monad.Trans   (MonadIO (liftIO))
-import           Data.ByteString       (ByteString)
-import qualified Data.ByteString       as B
-import           Data.Serialize        (decode, encode)
+import           Data.ByteString       (ByteString, hGet, hPut)
+import           Data.Word             (Word16, Word8)
 import           Database.Muesli.State hiding (Handle)
 import           Database.Muesli.Types
-import           System.IO             (Handle, SeekMode (..), hFileSize, hSeek,
-                                        hSetFileSize, hTell)
+import           Foreign               (Storable, alloca, peek, sizeOf, with)
+import           System.IO             (Handle, SeekMode (..), hFileSize,
+                                        hGetBuf, hPutBuf, hSeek, hSetFileSize,
+                                        hTell)
 
 logSeek :: MonadIO m => MasterState -> m ()
-logSeek m = liftIO $ hSeek h AbsoluteSeek p
-  where h = logHandle m
-        p = fromIntegral $ dbWordSize * fromIntegral (1 + logPos m)
+logSeek m = liftIO . hSeek (logHandle m) AbsoluteSeek . fromIntegral $ logPos m
 
-readWord :: MonadIO m => Handle -> m DBWord
-readWord h = do
-  bs <- liftIO $ B.hGet h dbWordSize
-  either (logError h . showString) return (decode bs)
+readBits :: forall a m. (Storable a, MonadIO m) => Handle -> m a
+readBits h = liftIO . alloca $ \ptr ->
+  liftIO $ hGetBuf h ptr (sizeOf (undefined :: a)) >> peek ptr
 
-writeWord :: MonadIO m => Handle -> DBWord -> m ()
-writeWord h w = liftIO . B.hPut h $ encode w
+writeBits :: (Storable a, MonadIO m) => Handle -> a -> m ()
+writeBits h w = liftIO . with w $ \ptr ->
+  liftIO $ hPutBuf h ptr (sizeOf w)
 
 readLogPos :: MonadIO m => Handle -> m (Addr, Size)
 readLogPos h = do
   sz <- liftIO $ hFileSize h
-  if sz >= fromIntegral dbWordSize then do
+  if sz >= fromIntegral (sizeOf (0 :: Addr)) then do
     liftIO $ hSeek h AbsoluteSeek 0
-    w <- readWord h
+    w <- readBits h
     return (w, fromIntegral sz)
   else
-    return (0, 0)
+    return (fromIntegral $ sizeOf (0 :: Addr), 0)
 
 writeLogPos :: MonadIO m => Handle -> Addr -> m ()
 writeLogPos h p = do
   liftIO $ hSeek h AbsoluteSeek 0
-  liftIO $ B.hPut h $ encode p
+  liftIO $ writeBits h p
 
 checkLogSize :: MonadIO m => Handle -> Int -> Int -> m Int
 checkLogSize hnd osz pos =
-  let bpos = dbWordSize * (pos + 1) in
-  if bpos > osz then do
-    let sz = max bpos $ osz + 4096
+  if pos > osz then do
+    let sz = max pos $ osz + 4096
     liftIO . hSetFileSize hnd $ fromIntegral sz
     return sz
   else return osz
@@ -86,16 +86,16 @@ checkDataSize hnd szi = do
 
 readLogTRec :: MonadIO m => Handle -> m TRec
 readLogTRec h = do
-  tag <- readWord h
-  case fromIntegral tag of
+  tag <- readBits h
+  case tag of
     x | x == pndTag -> do
-      tid <- readWord h
-      did <- readWord h
-      adr <- readWord h
-      siz <- readWord h
-      del <- readWord h
-      dlb <- case fromIntegral del of
-               y | y == truTag  -> return True
+      tid <- readBits h
+      did <- readBits h
+      adr <- readBits h
+      siz <- readBits h
+      del <- readBits h
+      dlb <- case del of
+               y | y == truTag -> return True
                y | y == flsTag -> return False
                _ -> logError h $
                       showString "True ('T') or False ('F') tag expected but " .
@@ -113,60 +113,60 @@ readLogTRec h = do
                                  , docDel   = dlb
                                  }
     x | x == cmpTag -> do
-      tid <- readWord h
+      tid <- readBits h
       return $ Completed tid
     _ -> logError h $ showString "Pending ('p') or Completed ('c') tag expected but " .
            shows tag . showString " found."
   where readWordList con = do
-          sz <- readWord h
-          replicateM (fromIntegral sz) $ do
-            pid <- readWord h
-            val <- readWord h
+          sz <- readBits h
+          replicateM (fromIntegral (sz :: Word16)) $ do
+            pid <- readBits h
+            val <- readBits h
             return $ con pid val
 
 writeLogTRec :: MonadIO m => Handle -> TRec -> m ()
 writeLogTRec h t =
   case t of
     Pending doc -> do
-      writeWord h $ fromIntegral pndTag
-      writeWord h $ docTID doc
-      writeWord h $ docID doc
-      writeWord h $ docAddr doc
-      writeWord h $ docSize doc
-      writeWord h . fromIntegral $ if docDel doc then truTag else flsTag
+      writeBits h pndTag
+      writeBits h $ docTID doc
+      writeBits h $ docID doc
+      writeBits h $ docAddr doc
+      writeBits h $ docSize doc
+      writeBits h $ if docDel doc then truTag else flsTag
       writeWordList $ (irefPID &&& irefVal) <$> docURefs doc
       writeWordList $ (irefPID &&& irefVal) <$> docIRefs doc
       writeWordList $ (drefPID &&& drefDID) <$> docDRefs doc
     Completed tid -> do
-      writeWord h $ fromIntegral cmpTag
-      writeWord h tid
+      writeBits h cmpTag
+      writeBits h tid
   where writeWordList rs = do
-          writeWord h . fromIntegral $ length rs
+          writeBits h (fromIntegral (length rs) :: Word16)
           forM_ rs $ \(pid, val) -> do
-             writeWord h pid
-             writeWord h val
+             writeBits h pid
+             writeBits h val
 
-pndTag :: Int
+pndTag :: Word8
 pndTag = 0x70 -- ASCII 'p'
 
-cmpTag :: Int
+cmpTag :: Word8
 cmpTag = 0x63 -- ASCII 'c'
 
-truTag :: Int
+truTag :: Word8
 truTag = 0x54 -- ASCII 'T'
 
-flsTag :: Int
+flsTag :: Word8
 flsTag = 0x46 -- ASCII 'F'
 
 readDocument :: MonadIO m => Handle -> DocRecord -> m ByteString
 readDocument hnd r = do
   liftIO . hSeek hnd AbsoluteSeek . fromIntegral $ docAddr r
-  liftIO . B.hGet hnd . fromIntegral $ docSize r
+  liftIO . hGet hnd . fromIntegral $ docSize r
 
 writeDocument :: MonadIO m => DocRecord -> ByteString -> Handle -> m ()
 writeDocument r bs hnd = unless (docDel r) $ do
   liftIO . hSeek hnd AbsoluteSeek . fromIntegral $ docAddr r
-  liftIO $ B.hPut hnd bs
+  liftIO $ hPut hnd bs
 
 logError :: MonadIO m => Handle -> ShowS -> m a
 logError h err = do

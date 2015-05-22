@@ -35,6 +35,7 @@ import           Database.Muesli.Indexes
 import           Database.Muesli.IO
 import           Database.Muesli.State
 import           Database.Muesli.Types
+import           Foreign                   (sizeOf)
 import           System.FilePath           ((</>))
 import           System.IO                 (BufferMode (..), IOMode (..),
                                             hClose, hSetBuffering,
@@ -62,8 +63,8 @@ open lf df = do
                       , intIdx    = Map.empty
                       , refIdx    = Map.empty
                       }
-  m' <- if (pos > 0) && (fromIntegral lsz > dbWordSize)
-        then readLog m 0
+  m' <- if pos > fromIntegral (sizeOf pos)
+        then readLog m (sizeOf pos)
         else return m
   let m'' = m' { gaps = Gaps.build $ mainIdx m' }
   mv <- liftIO $ newMVar m''

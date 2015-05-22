@@ -26,6 +26,7 @@ import           Database.Muesli.Indexes
 import           Database.Muesli.IO
 import           Database.Muesli.State
 import           Database.Muesli.Types
+import           Foreign                   (sizeOf)
 import           System.Directory          (renameFile)
 import qualified System.IO                 as IO
 
@@ -106,7 +107,7 @@ toTRecs rs = foldl' (\ts r -> Pending r : ts)
 writeTrans :: Int -> Int -> [TRec] -> IO.Handle -> IO Int
 writeTrans osz pos ts hnd = do
   sz <- checkLogSize hnd osz pos
-  IO.hSeek hnd IO.AbsoluteSeek $ fromIntegral dbWordSize
+  IO.hSeek hnd IO.AbsoluteSeek . fromIntegral $ sizeOf (0 :: DBWord)
   forM_ ts $ writeLogTRec hnd
   writeLogPos hnd $ fromIntegral pos
   return sz
