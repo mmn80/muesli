@@ -72,23 +72,24 @@ dataCache  :: LRUCache
 Data Files Format
 -----------------
 
-`TID`, `DID`, `Addr`, `PropID`, `Del` and `Size` are all aliases of `DBWord`,
-a newtype wrapper around `Word32`.
-`DBWord` has a custom serializer that enforces Big Endianess.
+`DID`, `Addr`, `Size` and `PropID` are aliases of `IxKey`, a newtype wrapper
+around `Int`.
+`TID` is auto-incremented `Word64`.
+The tags for `Pending`, `Completed` and `Del` are single bytes.
+`ValCount`, `UnqCount` and `RefCount` are `Word16`.
+All of them are serialized with their `Storable` instance.
 
 The pseudo-Haskell represents just a byte sequence in lexical order.
 
 ### Transaction Log File
 
-The transaction log is just a sequence of `DBWord`s, which makes it portable.
-The tags for `Pending` and `Completed` in the sum type are also `DBWord`.
-Any ordered subset of a valid log is a valid log.
-
 ```haskell
 logPos :: Addr
 recs   :: [TRec]
 
-TRec = Pending TID DID Addr Size Del ValCount [(PropID, IntVal)] RefCount [(PropID, DID)]
+TRec = Pending TID DID Addr Size Del UnqCount [(PropID, IntVal)]
+                                     ValCount [(PropID, IntVal)]
+                                     RefCount [(PropID, DID)]
      | Completed TID
 ```
 
@@ -105,7 +106,7 @@ Initialization
 --------------
 
 All meta data resides in `masterState`, which is built incrementally from the transaction log.
-Each `DBWord` in the log leads to an *O(log(n))* `masterState` update operation.
+Each record in the log leads to an *O(log(n))* `masterState` update operation.
 No "wrapping up" needs to be performed at the end.
 `masterState` remains consistent at every step.
 

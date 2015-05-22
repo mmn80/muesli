@@ -69,11 +69,11 @@ instance Show Handle where
   showsPrec p = showsPrec p . logFilePath . unHandle
 
 type TID    = Word64
-type DID    = DBWord
-type UnqVal = DBWord
-type PropID = DBWord
-type Addr   = DBWord
-type Size   = DBWord
+type DID    = IxKey
+type UnqVal = IxKey
+type PropID = IxKey
+type Addr   = IxKey
+type Size   = IxKey
 
 data DBState = DBState
   { logFilePath  :: FilePath
@@ -142,7 +142,7 @@ data DocReference = DocReference
 
 data IntReference = IntReference
   { irefPID :: !PropID
-  , irefVal :: !DBWord
+  , irefVal :: !IxKey
   } deriving (Show)
 
 data TRec = Pending DocRecord | Completed TID
@@ -161,7 +161,7 @@ tRecSize r = case r of
                                      length (docIRefs dr) +
                                      length (docDRefs dr)))
   Completed _ -> 9
-  where ws = sizeOf (0 :: DBWord)
+  where ws = sizeOf (0 :: IxKey)
 
 mkNewTransId :: MonadIO m => Handle -> m TID
 mkNewTransId h = withMaster h $ \m ->

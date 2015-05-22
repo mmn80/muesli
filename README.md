@@ -130,11 +130,12 @@ TODO
 live up to the "document-oriented" label, but this should be optional
 - [ ] better migration story
 - [ ] radix tree / PATRICIA implementation for proper full-text search
-(currently indexing strings just takes first 4 chars and turnes them into an int,
+(currently indexing strings just takes first 4/8 chars and turnes them into an int,
 which is good enough for simple sorting)
 - [ ] replication
 - [ ] more advanced & flexible index system supporting complex indexes, joins, etc.
 - [ ] fancy query language
+- [ ] optimize reads: faster cache, mainIdx (hastable maybe?)
 - [x] waiting for [`OverloadedRecordFields`][orf]
 
 Implementation

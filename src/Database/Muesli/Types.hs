@@ -23,8 +23,8 @@
 module Database.Muesli.Types
   (
 -- * General
-    DBWord (..)
-  , ToDBWord (..)
+    IxKey (..)
+  , ToKey (..)
   , DatabaseError (..)
   , Property (..)
 -- * Main classes
@@ -73,19 +73,19 @@ data DatabaseError =
 instance Exception DatabaseError
 
 -- | The internal type used to read/write in the log file.
-newtype DBWord = DBWord { unDBWord :: Int }
+newtype IxKey = IxKey { unIxKey :: Int }
   deriving (Eq, Ord, Bounded, Num, Enum, Real, Integral,
             Bits, FiniteBits, Storable, Serialize)
 
-instance Show DBWord where
-  showsPrec p = showsPrec p . unDBWord
+instance Show IxKey where
+  showsPrec p = showsPrec p . unIxKey
 
-type PropID = DBWord
-type DID    = DBWord
-type UnqVal = DBWord
+type PropID = IxKey
+type DID    = IxKey
+type UnqVal = IxKey
 
-class ToDBWord a where
-  toDBWord :: a -> DBWord
+class ToKey a where
+  toKey :: a -> IxKey
 
 -- Properties ------------------------------------------------------------------
 
@@ -116,23 +116,23 @@ newtype Sortable a = Sortable { unSortable :: a }
 instance Show a => Show (Sortable a) where
   showsPrec p (Sortable a) = showsPrec p a
 
-instance ToDBWord (Sortable DBWord) where
-  toDBWord (Sortable w) = w
+instance ToKey (Sortable IxKey) where
+  toKey (Sortable w) = w
 
-instance ToDBWord (Sortable Bool) where
-  toDBWord (Sortable b) = if b then 1 else 0
+instance ToKey (Sortable Bool) where
+  toKey (Sortable b) = if b then 1 else 0
 
-instance ToDBWord (Sortable Int) where
-  toDBWord (Sortable a) = fromIntegral a
+instance ToKey (Sortable Int) where
+  toKey (Sortable a) = fromIntegral a
 
-instance ToDBWord (Sortable UTCTime) where
-  toDBWord (Sortable t) = round $ utcTimeToPOSIXSeconds t
+instance ToKey (Sortable UTCTime) where
+  toKey (Sortable t) = round $ utcTimeToPOSIXSeconds t
 
-instance {-# OVERLAPPABLE #-} Show a => ToDBWord (Sortable a) where
-  toDBWord (Sortable a) = snd $ foldl' f (ws - 1, 0) bytes
+instance {-# OVERLAPPABLE #-} Show a => ToKey (Sortable a) where
+  toKey (Sortable a) = snd $ foldl' f (ws - 1, 0) bytes
     where bytes = (fromIntegral . fromEnum <$> take ws str) :: [Word8]
           f (n, v) b = (n - 1, if n >= 0 then v + fromIntegral b * 2 ^ (8 * n) else v)
-          ws = sizeOf (0 :: DBWord)
+          ws = sizeOf (0 :: IxKey)
           str = case show a of
                   '"':as -> as
                   ss     -> ss
@@ -143,14 +143,14 @@ newtype Unique a = Unique { unUnique :: a }
 instance Show a => Show (Unique a) where
   showsPrec p (Unique a) = showsPrec p a
 
-instance Hashable a => ToDBWord (Unique (Sortable a)) where
-  toDBWord (Unique (Sortable a)) = fromIntegral $ hash a
+instance Hashable a => ToKey (Unique (Sortable a)) where
+  toKey (Unique (Sortable a)) = fromIntegral $ hash a
 
-instance {-# OVERLAPPABLE #-} Hashable a => ToDBWord (Unique a) where
-  toDBWord (Unique a) = fromIntegral $ hash a
+instance {-# OVERLAPPABLE #-} Hashable a => ToKey (Unique a) where
+  toKey (Unique a) = fromIntegral $ hash a
 
 class Indexable a where
-  getIxValues :: a -> [DBWord]
+  getIxValues :: a -> [IxKey]
   getIxValues _ = []
 
   isReference :: Proxy a -> Bool
@@ -175,8 +175,8 @@ instance Indexable Bool
 instance Indexable Int
 instance Indexable String
 
-instance ToDBWord (Sortable a) => Indexable (Sortable a) where
-  getIxValues s = [ toDBWord s ]
+instance ToKey (Sortable a) => Indexable (Sortable a) where
+  getIxValues s = [ toKey s ]
   isReference _ = False
 
 instance (Hashable a, Indexable (Sortable a)) => Indexable (Unique (Sortable a)) where

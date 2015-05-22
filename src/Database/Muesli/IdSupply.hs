@@ -23,12 +23,12 @@ module Database.Muesli.IdSupply
 import           Control.Exception     (throw)
 import           Data.IntMap.Strict    (IntMap)
 import qualified Data.IntMap.Strict    as Map
-import           Database.Muesli.Types (DBWord, DatabaseError (..))
+import           Database.Muesli.Types (IxKey, DatabaseError (..))
 
 type IdSupply = IntMap Size
 
-type DID      = DBWord
-type Size     = DBWord
+type DID      = IxKey
+type Size     = IxKey
 
 empty :: IdSupply
 empty = Map.singleton 1 (maxBound - 1)

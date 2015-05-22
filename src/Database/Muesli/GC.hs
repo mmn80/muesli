@@ -110,7 +110,7 @@ toTRecs rs = foldl' (\ts r -> Pending r : ts)
 writeTrans :: Int -> Int -> [TRec] -> IO.Handle -> IO Int
 writeTrans osz pos ts hnd = do
   sz <- checkLogSize hnd osz pos
-  IO.hSeek hnd IO.AbsoluteSeek . fromIntegral $ sizeOf (0 :: DBWord)
+  IO.hSeek hnd IO.AbsoluteSeek . fromIntegral $ sizeOf (0 :: IxKey)
   forM_ ts $ writeLogTRec hnd
   writeLogPos hnd $ fromIntegral pos
   return sz
