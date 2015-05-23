@@ -38,20 +38,19 @@ import           Data.Maybe                (fromMaybe)
 import qualified Database.Muesli.Allocator as Gaps
 import qualified Database.Muesli.Cache     as Cache
 import           Database.Muesli.Indexes
-import           Database.Muesli.IO
 import           Database.Muesli.State
 import           Database.Muesli.Types
 import           Prelude                   hiding (filter, lookup)
 
-newtype Transaction m a = Transaction
-  { unTransaction :: StateT TransactionState m a }
+newtype Transaction l d m a = Transaction
+  { unTransaction :: StateT (TransactionState l d) m a }
   deriving (Functor, Applicative, Monad)
 
-instance MonadIO m => MonadIO (Transaction m) where
+instance MonadIO m => MonadIO (Transaction l d m) where
   liftIO = Transaction . liftIO
 
-data TransactionState = TransactionState
-  { transHandle     :: Handle
+data TransactionState l d = TransactionState
+  { transHandle     :: Handle l d
   , transTID        :: !TID
   , transReadList   :: ![DID]
   , transUpdateList :: ![(DocRecord, ByteString)]
@@ -64,7 +63,7 @@ data TransactionAbort = AbortUnique String
 
 instance Exception TransactionAbort
 
-runQuery :: MonadIO m => Handle -> Transaction m a ->
+runQuery :: (MonadIO m, LogState l) => Handle l d -> Transaction l d m a ->
             m (Either TransactionAbort a)
 runQuery h (Transaction t) = do
   tid <- mkNewTransId h
@@ -78,17 +77,12 @@ runQuery h (Transaction t) = do
        | not $ checkDelete m u -> return (m, Left $
            AbortDelete "Document cannot be deleted. Other documents still point to it.")
        | otherwise -> do
-           let tsz = sum $ (tRecSize . Pending . fst) <$> u
-           let pos = fromIntegral (logPos m) + tsz
-           lsz <- checkLogSize (logHandle m) (fromIntegral (logSize m)) pos
            let (ts, gs) = L.foldl' allocFold ([], gaps m) u
-           let m' = m { logPos  = fromIntegral pos
-                      , logSize = fromIntegral lsz
-                      , gaps    = gs
-                      , logPend = Map.insert tid ts $ logPend m
+           st <- logAppend (logState m) (Pending . fst <$> ts)
+           let m' = m { logState = st
+                      , gaps     = gs
+                      , logPend  = Map.insert tid ts $ logPend m
                       }
-           writeTransactions m ts
-           writeLogPos (logHandle m) $ fromIntegral pos
            return (m', Right a)
   where
     runUserCode tid = do
@@ -137,12 +131,7 @@ runQuery h (Transaction t) = do
         where (a, gs') = Gaps.alloc gs $ docSize r
               r' = r { docAddr = a }
 
-    writeTransactions m ts = do
-      logSeek m
-      forM_ ts $ \(r, _) ->
-        writeLogTRec (logHandle m) $ Pending r
-
-updateManThread :: Handle -> Bool -> IO ()
+updateManThread :: (LogState l, DataHandle d) => Handle l d -> Bool -> IO ()
 updateManThread h w = do
   (kill, wait) <- withUpdateMan h $ \kill -> do
     wait <- if kill then return True else do
@@ -154,8 +143,6 @@ updateManThread h w = do
       >>=
       maybe (return True) (\(tid, rs) -> do
         withData h $ \(DataState hnd cache) -> do
-          let maxAddr = maximum $ (\r -> docAddr r + docSize r) . fst <$> rs
-          checkDataSize hnd . fromIntegral $ maxAddr + 1
           forM_ rs $ \(r, bs) -> writeDocument r bs hnd
           let cache' = foldl' (\c (r, _) -> Cache.delete (fromIntegral $ docAddr r) c)
                          cache rs
@@ -163,21 +150,15 @@ updateManThread h w = do
         withMaster h $ \m -> do
           let rs' = fst <$> rs
           let trec = Completed tid
-          let pos = fromIntegral (logPos m) + tRecSize trec
-          lsz <- checkLogSize (logHandle m) (fromIntegral (logSize m)) pos
-          logSeek m
-          let lh = logHandle m
-          writeLogTRec lh trec
-          writeLogPos lh $ fromIntegral pos
+          st <- logAppend (logState m) [trec]
           let (lgp, lgc) = updateLog tid (keepTrans m) (logPend m) (logComp m)
-          let m' = m { logPos  = fromIntegral pos
-                     , logSize = fromIntegral lsz
-                     , logPend = lgp
-                     , logComp = lgc
-                     , mainIdx = updateMainIdx (mainIdx m) rs'
-                     , unqIdx  = updateUnqIdx (unqIdx m) rs'
-                     , intIdx  = updateIntIdx (intIdx m) rs'
-                     , refIdx  = updateRefIdx (refIdx m) rs'
+          let m' = m { logState = st
+                     , logPend  = lgp
+                     , logComp  = lgc
+                     , mainIdx  = updateMainIdx (mainIdx m) rs'
+                     , unqIdx   = updateUnqIdx (unqIdx m) rs'
+                     , intIdx   = updateIntIdx (intIdx m) rs'
+                     , refIdx   = updateRefIdx (refIdx m) rs'
                      }
           return (m', null lgp))
     return (kill, (kill, wait))

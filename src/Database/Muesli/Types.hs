@@ -40,6 +40,7 @@ module Database.Muesli.Types
   ) where
 
 import           Control.Exception     (Exception)
+import           Control.Monad.Trans   (MonadIO)
 import           Data.Bits             (Bits, FiniteBits)
 import           Data.Hashable         (Hashable, hash)
 import           Data.List             (foldl')
@@ -60,8 +61,7 @@ import           Numeric               (showHex)
 -- During normal operation these should never be thrown.
 data DatabaseError
   -- | Thrown when the log file is corrupted.
-  -- Holds file position and a message.
-  = LogParseError Int String
+  = LogParseError String
   -- | Thrown after deserialization errors.
   -- Holds starting position, size, and a message.
   | DataParseError Int Int String

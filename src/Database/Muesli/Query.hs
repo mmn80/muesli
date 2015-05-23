@@ -52,13 +52,12 @@ import           Data.Time.Clock        (getCurrentTime)
 import           Data.Typeable          (Typeable)
 import qualified Database.Muesli.Cache  as Cache
 import           Database.Muesli.Commit
-import           Database.Muesli.IO
 import           Database.Muesli.State
 import           Database.Muesli.Types
 import           Prelude                hiding (filter, lookup)
 
-lookup :: (Document a, MonadIO m) => Reference a ->
-          Transaction m (Maybe (Reference a, a))
+lookup :: (Document a, DataHandle d, MonadIO m) => Reference a ->
+           Transaction l d m (Maybe (Reference a, a))
 lookup (Reference did) = Transaction $ do
   t <- S.get
   mbr <- withMasterLock (transHandle t) $ \m ->
@@ -70,7 +69,7 @@ lookup (Reference did) = Transaction $ do
   S.put t { transReadList = did : transReadList t }
   return mba
 
-findFirstDoc :: MasterState -> TransactionState -> DID ->
+findFirstDoc :: MasterState l -> TransactionState l d -> DID ->
                 Maybe (DocRecord, Maybe ByteString)
 findFirstDoc m t did = do
   (r, mbs) <- liftM (fmap Just)
@@ -81,7 +80,7 @@ findFirstDoc m t did = do
   if docDel r then Nothing else Just (r, mbs)
 
 lookupUnique :: (ToKey (Unique b), MonadIO m) =>
-                Property a -> Unique b -> Transaction m (Maybe (Reference a))
+                 Property a -> Unique b -> Transaction l d m (Maybe (Reference a))
 lookupUnique p ub = Transaction $ do
   t <- S.get
   let u = toKey ub
@@ -93,15 +92,15 @@ lookupUnique p ub = Transaction $ do
   where pp = fst $ unProperty p
 
 updateUnique :: (Document a, ToKey (Unique b), MonadIO m) =>
-                Property a -> Unique b -> a -> Transaction m (Reference a)
+                 Property a -> Unique b -> a -> Transaction l d m (Reference a)
 updateUnique p u a = do
   mdid <- lookupUnique p u
   case mdid of
     Nothing  -> insert a
     Just did -> update did a >> return did
 
-update :: forall a m. (Document a, MonadIO m) =>
-          Reference a -> a -> Transaction m ()
+update :: forall a l d m. (Document a, MonadIO m) =>
+          Reference a -> a -> Transaction l d m ()
 update did a = Transaction $ do
   t <- S.get
   let bs = encode a
@@ -121,14 +120,14 @@ update did a = Transaction $ do
     fd (p, rid) = DocReference (getP p) rid
     getP p = fst $ unProperty (fromString p :: Property a)
 
-insert :: (Document a, MonadIO m) => a -> Transaction m (Reference a)
+insert :: (Document a, MonadIO m) => a -> Transaction l d m (Reference a)
 insert a = Transaction $ do
   t <- S.get
   did <- mkNewDocId $ transHandle t
   unTransaction $ update (Reference did) a
   return $ Reference did
 
-delete :: MonadIO m => Reference a -> Transaction m ()
+delete :: MonadIO m => Reference a -> Transaction l d m ()
 delete (Reference did) = Transaction $ do
   t <- S.get
   mb <- withMasterLock (transHandle t) $ \m -> return $ findFirstDoc m t did
@@ -143,9 +142,9 @@ delete (Reference did) = Transaction $ do
                     }
   S.put t { transUpdateList = (r, B.empty) : transUpdateList t }
 
-page_ :: (Document a, ToKey (Sortable b), MonadIO m) =>
-         (Int -> MasterState -> [Int]) -> Maybe (Sortable b) ->
-         Transaction m [(Reference a, a)]
+page_ :: (Document a, ToKey (Sortable b), DataHandle d, MonadIO m) =>
+         (Int -> MasterState l -> [Int]) -> Maybe (Sortable b) ->
+          Transaction l d m [(Reference a, a)]
 page_ f mdid = Transaction $ do
   t <- S.get
   dds <- withMasterLock (transHandle t) $ \m -> do
@@ -158,25 +157,25 @@ page_ f mdid = Transaction $ do
   S.put t { transReadList = (unReference . fst <$> dds') ++ transReadList t }
   return dds'
 
-range :: (Document a, ToKey (Sortable b), MonadIO m) => Maybe (Sortable b) ->
-         Maybe (Reference a) -> Property a -> Int ->
-         Transaction m [(Reference a, a)]
+range :: (Document a, ToKey (Sortable b), DataHandle d, MonadIO m) =>
+          Maybe (Sortable b) -> Maybe (Reference a) -> Property a -> Int ->
+          Transaction l d m [(Reference a, a)]
 range mst msti p pg = page_ f mst
   where f st m = fromMaybe [] $ do
                    ds <- IntMap.lookup (prop2Int p) (intIdx m)
                    return $ getPage st (rval msti) pg ds
 
-filter :: (Document a, ToKey (Sortable b), MonadIO m) => Maybe (Reference c) ->
-          Maybe (Sortable b) -> Maybe (Reference a) -> Property a ->
-          Property a -> Int -> Transaction m [(Reference a, a)]
+filter :: (Document a, ToKey (Sortable b), DataHandle d, MonadIO m) =>
+           Maybe (Reference c) -> Maybe (Sortable b) -> Maybe (Reference a) ->
+           Property a -> Property a -> Int -> Transaction l d m [(Reference a, a)]
 filter mdid mst msti fprop sprop pg = page_ f mst
   where f _ m = fromMaybe [] . liftM (getPage (ival mst) (rval msti) pg) $
                   IntMap.lookup (fromIntegral . fst . unProperty $ fprop) (refIdx m) >>=
                   IntMap.lookup (fromIntegral $ maybe 0 unReference mdid) >>=
                   IntMap.lookup (prop2Int sprop)
 
-pageK_ :: (MonadIO m, ToKey (Sortable b)) => (Int -> MasterState -> [Int]) ->
-          Maybe (Sortable b) -> Transaction m [Reference a]
+pageK_ :: (MonadIO m, ToKey (Sortable b)) => (Int -> MasterState l -> [Int]) ->
+           Maybe (Sortable b) -> Transaction l d m [Reference a]
 pageK_ f mdid = Transaction $ do
   t <- S.get
   dds <- withMasterLock (transHandle t) $ \m -> return $
@@ -186,7 +185,7 @@ pageK_ f mdid = Transaction $ do
   return (Reference <$> dds)
 
 rangeK :: (Document a, ToKey (Sortable b), MonadIO m) => Maybe (Sortable b) ->
-          Maybe (Reference a) -> Property a -> Int -> Transaction m [Reference a]
+           Maybe (Reference a) -> Property a -> Int -> Transaction l d m [Reference a]
 rangeK mst msti p pg = pageK_ f mst
   where f st m = fromMaybe [] $ getPage st (rval msti) pg <$>
                                 IntMap.lookup (prop2Int p) (intIdx m)
@@ -210,11 +209,12 @@ getPage2 sta pg idx = go sta pg []
                  Nothing -> (p, acc)
                  Just a  -> go a (p - 1) (a:acc)
 
-size :: (Document a, MonadIO m) => Property a -> Transaction m Int
+size :: (Document a, MonadIO m) => Property a -> Transaction l d m Int
 size p = Transaction $ do
   t <- S.get
   withMasterLock (transHandle t) $ \m -> return . fromMaybe 0 $
-    (sum . map (Set.size . snd) . IntMap.toList) <$> IntMap.lookup (prop2Int p) (intIdx m)
+    (sum . map (Set.size . snd) . IntMap.toList) <$>
+     IntMap.lookup (prop2Int p) (intIdx m)
 
 rval :: Maybe (Reference a) -> Int
 rval = fromIntegral . unReference . fromMaybe maxBound
@@ -225,8 +225,8 @@ ival = fromIntegral . maybe maxBound toKey
 prop2Int :: Document a => Property a -> Int
 prop2Int = fromIntegral . fst . unProperty
 
-getDocument :: (Typeable a, Serialize a, MonadIO m) => Handle -> DocRecord ->
-               Maybe ByteString -> m a
+getDocument :: (Typeable a, Serialize a, MonadIO m, DataHandle d) =>
+                Handle l d -> DocRecord -> Maybe ByteString -> m a
 getDocument h r mbs =
   withData h $ \(DataState hnd cache) -> do
     now <- getCurrentTime
