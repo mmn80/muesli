@@ -2,11 +2,13 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections       #-}
 
+{-# OPTIONS_HADDOCK show-extensions #-}
+
 -----------------------------------------------------------------------------
 -- |
 -- Module      : Database.Muesli.Query
--- Copyright   : (C) 2015 Călin Ardelean,
--- License     : MIT (see the file LICENSE.md)
+-- Copyright   : (c) 2015 Călin Ardelean
+-- License     : MIT
 --
 -- Maintainer  : Călin Ardelean <calinucs@gmail.com>
 -- Stability   : experimental
@@ -17,6 +19,7 @@
 
 module Database.Muesli.Query
   ( module Database.Muesli.Types
+  , module Database.Muesli.Backend.Types
   , Transaction
   , TransactionAbort (..)
   , runQuery
@@ -32,29 +35,30 @@ module Database.Muesli.Query
   , size
   ) where
 
-import           Control.Applicative    ((<|>))
-import           Control.Exception      (throw)
-import           Control.Monad          (forM, liftM)
-import qualified Control.Monad.State    as S
-import           Control.Monad.Trans    (MonadIO (liftIO))
-import           Data.ByteString        (ByteString)
-import qualified Data.ByteString        as B
-import           Data.IntMap.Strict     (IntMap)
-import qualified Data.IntMap.Strict     as IntMap
-import           Data.IntSet            (IntSet)
-import qualified Data.IntSet            as Set
-import qualified Data.List              as L
-import qualified Data.Map.Strict        as Map
-import           Data.Maybe             (fromMaybe)
-import           Data.Serialize         (Serialize (..), decode, encode)
-import           Data.String            (IsString (..))
-import           Data.Time.Clock        (getCurrentTime)
-import           Data.Typeable          (Typeable)
-import qualified Database.Muesli.Cache  as Cache
+import           Control.Applicative           ((<|>))
+import           Control.Exception             (throw)
+import           Control.Monad                 (forM, liftM)
+import qualified Control.Monad.State           as S
+import           Control.Monad.Trans           (MonadIO (liftIO))
+import           Data.ByteString               (ByteString)
+import qualified Data.ByteString               as B
+import           Data.IntMap.Strict            (IntMap)
+import qualified Data.IntMap.Strict            as IntMap
+import           Data.IntSet                   (IntSet)
+import qualified Data.IntSet                   as Set
+import qualified Data.List                     as L
+import qualified Data.Map.Strict               as Map
+import           Data.Maybe                    (fromMaybe)
+import           Data.Serialize                (Serialize (..), decode, encode)
+import           Data.String                   (IsString (..))
+import           Data.Time.Clock               (getCurrentTime)
+import           Data.Typeable                 (Typeable)
+import           Database.Muesli.Backend.Types
+import qualified Database.Muesli.Cache         as Cache
 import           Database.Muesli.Commit
 import           Database.Muesli.State
 import           Database.Muesli.Types
-import           Prelude                hiding (filter, lookup)
+import           Prelude                       hiding (filter, lookup)
 
 lookup :: (Document a, DataHandle d, MonadIO m) => Reference a ->
            Transaction l d m (Maybe (Reference a, a))
@@ -69,15 +73,15 @@ lookup (Reference did) = Transaction $ do
   S.put t { transReadList = did : transReadList t }
   return mba
 
-findFirstDoc :: MasterState l -> TransactionState l d -> DID ->
-                Maybe (DocRecord, Maybe ByteString)
+findFirstDoc :: MasterState l -> TransactionState l d -> DocumentKey ->
+                Maybe (LogRecord, Maybe ByteString)
 findFirstDoc m t did = do
   (r, mbs) <- liftM (fmap Just)
-                    (L.find ((== did) . docID . fst) (transUpdateList t))
+                    (L.find ((== did) . recDocumentKey . fst) (transUpdateList t))
           <|> liftM (, Nothing)
                     (IntMap.lookup (fromIntegral did) (mainIdx m) >>=
-                     L.find ((<= transTID t) . docTID))
-  if docDel r then Nothing else Just (r, mbs)
+                     L.find ((<= transId t) . recTransactionId))
+  if recDeleted r then Nothing else Just (r, mbs)
 
 lookupUnique :: (ToKey (Unique b), MonadIO m) =>
                  Property a -> Unique b -> Transaction l d m (Maybe (Reference a))
@@ -105,25 +109,24 @@ update did a = Transaction $ do
   t <- S.get
   let bs = encode a
   let is = getIndexables a
-  let r = DocRecord { docID   = unReference did
-                    , docTID  = transTID t
-                    , docURefs = fi <$> ixUnqs is
-                    , docIRefs = fi <$> ixInts is
-                    , docDRefs = fd <$> ixRefs is
-                    , docAddr = 0
-                    , docSize = fromIntegral $ B.length bs
-                    , docDel  = False
+  let r = LogRecord { recDocumentKey   = unReference did
+                    , recTransactionId = transId t
+                    , recUniques       = p2k <$> ixUniques is
+                    , recSortables     = p2k <$> ixSortables is
+                    , recReferences    = p2k <$> ixReferences is
+                    , recAddress       = 0
+                    , recSize          = fromIntegral $ B.length bs
+                    , recDeleted       = False
                     }
   S.put t { transUpdateList = (r, bs) : transUpdateList t }
   where
-    fi (p, val) = IntReference (getP p) val
-    fd (p, rid) = DocReference (getP p) rid
+    p2k (p, val) = (getP p, val)
     getP p = fst $ unProperty (fromString p :: Property a)
 
 insert :: (Document a, MonadIO m) => a -> Transaction l d m (Reference a)
 insert a = Transaction $ do
   t <- S.get
-  did <- mkNewDocId $ transHandle t
+  did <- mkNewDocumentKey $ transHandle t
   unTransaction $ update (Reference did) a
   return $ Reference did
 
@@ -131,14 +134,14 @@ delete :: MonadIO m => Reference a -> Transaction l d m ()
 delete (Reference did) = Transaction $ do
   t <- S.get
   mb <- withMasterLock (transHandle t) $ \m -> return $ findFirstDoc m t did
-  let r = DocRecord { docID    = did
-                    , docTID   = transTID t
-                    , docURefs = maybe [] (docURefs . fst) mb
-                    , docIRefs = maybe [] (docIRefs . fst) mb
-                    , docDRefs = maybe [] (docDRefs . fst) mb
-                    , docAddr  = maybe 0  (docAddr  . fst) mb
-                    , docSize  = maybe 0  (docSize  . fst) mb
-                    , docDel   = True
+  let r = LogRecord { recDocumentKey   = did
+                    , recTransactionId = transId t
+                    , recUniques       = maybe [] (recUniques . fst) mb
+                    , recSortables     = maybe [] (recSortables . fst) mb
+                    , recReferences    = maybe [] (recReferences . fst) mb
+                    , recAddress       = maybe 0  (recAddress  . fst) mb
+                    , recSize          = maybe 0  (recSize  . fst) mb
+                    , recDeleted       = True
                     }
   S.put t { transUpdateList = (r, B.empty) : transUpdateList t }
 
@@ -153,7 +156,7 @@ page_ f mdid = Transaction $ do
            return $ concatMap (foldMap pure) mbds
   dds' <- forM (reverse dds) $ \(d, mbs) -> do
     a <- getDocument (transHandle t) d mbs
-    return (Reference $ docID d, a)
+    return (Reference $ recDocumentKey d, a)
   S.put t { transReadList = (unReference . fst <$> dds') ++ transReadList t }
   return dds'
 
@@ -162,7 +165,7 @@ range :: (Document a, ToKey (Sortable b), DataHandle d, MonadIO m) =>
           Transaction l d m [(Reference a, a)]
 range mst msti p pg = page_ f mst
   where f st m = fromMaybe [] $ do
-                   ds <- IntMap.lookup (prop2Int p) (intIdx m)
+                   ds <- IntMap.lookup (prop2Int p) (sortIdx m)
                    return $ getPage st (rval msti) pg ds
 
 filter :: (Document a, ToKey (Sortable b), DataHandle d, MonadIO m) =>
@@ -179,8 +182,8 @@ pageK_ :: (MonadIO m, ToKey (Sortable b)) => (Int -> MasterState l -> [Int]) ->
 pageK_ f mdid = Transaction $ do
   t <- S.get
   dds <- withMasterLock (transHandle t) $ \m -> return $
-    concatMap (map (docID . fst) . foldMap pure . findFirstDoc m t . fromIntegral) $
-    f (ival mdid) m
+    concatMap (map (recDocumentKey . fst) . foldMap pure . findFirstDoc m t .
+    fromIntegral) $ f (ival mdid) m
   S.put t { transReadList = dds ++ transReadList t }
   return (Reference <$> dds)
 
@@ -188,7 +191,7 @@ rangeK :: (Document a, ToKey (Sortable b), MonadIO m) => Maybe (Sortable b) ->
            Maybe (Reference a) -> Property a -> Int -> Transaction l d m [Reference a]
 rangeK mst msti p pg = pageK_ f mst
   where f st m = fromMaybe [] $ getPage st (rval msti) pg <$>
-                                IntMap.lookup (prop2Int p) (intIdx m)
+                                IntMap.lookup (prop2Int p) (sortIdx m)
 
 getPage :: Int -> Int -> Int -> IntMap IntSet -> [Int]
 getPage sta sti pg idx = go sta pg []
@@ -214,7 +217,7 @@ size p = Transaction $ do
   t <- S.get
   withMasterLock (transHandle t) $ \m -> return . fromMaybe 0 $
     (sum . map (Set.size . snd) . IntMap.toList) <$>
-     IntMap.lookup (prop2Int p) (intIdx m)
+     IntMap.lookup (prop2Int p) (sortIdx m)
 
 rval :: Maybe (Reference a) -> Int
 rval = fromIntegral . unReference . fromMaybe maxBound
@@ -226,13 +229,13 @@ prop2Int :: Document a => Property a -> Int
 prop2Int = fromIntegral . fst . unProperty
 
 getDocument :: (Typeable a, Serialize a, MonadIO m, DataHandle d) =>
-                Handle l d -> DocRecord -> Maybe ByteString -> m a
+                Handle l d -> LogRecord -> Maybe ByteString -> m a
 getDocument h r mbs =
   withData h $ \(DataState hnd cache) -> do
     now <- getCurrentTime
-    let k = fromIntegral $ docAddr r
+    let k = fromIntegral $ recAddress r
     let decodeBs bs =
-          either (throw . DataParseError k (fromIntegral $ docSize r) .
+          either (throw . DataParseError k (fromIntegral $ recSize r) .
                   showString "Deserialization error: ")
           (\a -> return (DataState hnd $ Cache.insert now k a (B.length bs) cache, a))
           (decode bs)

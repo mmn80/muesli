@@ -1,8 +1,8 @@
 -----------------------------------------------------------------------------
 -- |
 -- Module      : Database.Muesli.State
--- Copyright   : (C) 2015 Călin Ardelean,
--- License     : MIT (see the file LICENSE.md)
+-- Copyright   : (c) 2015 Călin Ardelean
+-- License     : MIT
 --
 -- Maintainer  : Călin Ardelean <calinucs@gmail.com>
 -- Stability   : experimental
@@ -20,9 +20,9 @@ module Database.Muesli.State
   , SortIndex
   , FilterIndex
   , UniqueIndex
-  , Gaps
-  , LogPending
-  , LogCompleted
+  , GapsIndex
+  , PendingIndex
+  , CompletedIndex
   , DataState (..)
   , GCState (..)
   , withMaster
@@ -32,8 +32,8 @@ module Database.Muesli.State
   , withMasterLock
   , withDataLock
   , DatabaseError (..)
-  , mkNewTransId
-  , mkNewDocId
+  , mkNewTransactionId
+  , mkNewDocumentKey
   , findUnique
   ) where
 
@@ -68,31 +68,25 @@ data DBState l d = DBState
 instance Eq (DBState l d) where
   s == s' = logFilePath s == logFilePath s'
 
-type MainIndex = IntMap [DocRecord]
-
-type SortIndex = IntMap (IntMap IntSet)
-
-type FilterIndex = IntMap (IntMap SortIndex)
-
-type UniqueIndex = IntMap (IntMap Int)
-
-type Gaps = IntMap [Addr]
-
-type LogPending = Map TID [(DocRecord, ByteString)]
-
-type LogCompleted = Map TID [DocRecord]
+type MainIndex      = IntMap [LogRecord]
+type SortIndex      = IntMap (IntMap IntSet)
+type FilterIndex    = IntMap (IntMap SortIndex)
+type UniqueIndex    = IntMap (IntMap Int)
+type GapsIndex      = IntMap [DocAddress]
+type PendingIndex   = Map TransactionId [(LogRecord, ByteString)]
+type CompletedIndex = Map TransactionId [LogRecord]
 
 data MasterState l = MasterState
   { logState  :: !l
-  , topTID    :: !TID
+  , topTid    :: !TransactionId
   , idSupply  :: !IdSupply
   , keepTrans :: !Bool
-  , gaps      :: !Gaps
-  , logPend   :: !LogPending
-  , logComp   :: !LogCompleted
+  , gaps      :: !GapsIndex
+  , logPend   :: !PendingIndex
+  , logComp   :: !CompletedIndex
   , mainIdx   :: !MainIndex
   , unqIdx    :: !UniqueIndex
-  , intIdx    :: !SortIndex
+  , sortIdx   :: !SortIndex
   , refIdx    :: !FilterIndex
   }
 
@@ -103,19 +97,19 @@ data DataState d = DataState
 
 data GCState = IdleGC | PerformGC | KillGC deriving (Eq)
 
-mkNewTransId :: MonadIO m => Handle l d -> m TID
-mkNewTransId h = withMaster h $ \m ->
-  let tid = topTID m + 1 in
-  return (m { topTID = tid }, tid)
+mkNewTransactionId :: MonadIO m => Handle l d -> m TransactionId
+mkNewTransactionId h = withMaster h $ \m ->
+  let tid = topTid m + 1 in
+  return (m { topTid = tid }, tid)
 
-mkNewDocId :: MonadIO m => Handle l d -> m DID
-mkNewDocId h = withMaster h $ \m ->
+mkNewDocumentKey :: MonadIO m => Handle l d -> m DocumentKey
+mkNewDocumentKey h = withMaster h $ \m ->
   let (tid, s) = Ids.alloc (idSupply m) in
   return (m { idSupply = s }, tid)
 
-findUnique :: PropID -> UnqVal -> [(DocRecord, a)] -> Maybe DID
-findUnique p u rs = fmap docID . find findR $ map fst rs
-  where findR = any (\i -> irefPID i == p && irefVal i == u) . docURefs
+findUnique :: PropertyKey -> UniqueKey -> [(LogRecord, a)] -> Maybe DocumentKey
+findUnique p u rs = fmap recDocumentKey . find findR $ map fst rs
+  where findR = elem (p, u) . recUniques
 
 withMasterLock :: MonadIO m => Handle l d -> (MasterState l -> IO a) -> m a
 withMasterLock h = liftIO . bracket

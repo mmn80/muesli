@@ -12,8 +12,8 @@
 -----------------------------------------------------------------------------
 -- |
 -- Module      : Database.Muesli.Types
--- Copyright   : (C) 2015 Călin Ardelean,
--- License     : MIT (see the file LICENSE.md)
+-- Copyright   : (c) 2015 Călin Ardelean
+-- License     : MIT
 --
 -- Maintainer  : Călin Ardelean <calinucs@gmail.com>
 -- Stability   : experimental
@@ -32,9 +32,13 @@ module Database.Muesli.Types
   , Indexable (..)
   , Document (..)
   , Indexables (..)
--- * Other
+-- * Index keyes
   , IxKey (..)
+  , DocumentKey
+  , SortableKey
+  , UniqueKey
   , ToKey (..)
+-- * Other
   , Property (..)
   , DatabaseError (..)
   ) where
@@ -74,16 +78,20 @@ data DatabaseError
 
 instance Exception DatabaseError
 
--- | Used inside the index and as argument to query primitives.
+-- | Used inside indexes and as arguments to query primitives.
 newtype IxKey = IxKey { unIxKey :: Int }
   deriving (Eq, Ord, Bounded, Num, Enum, Real, Integral,
             Bits, FiniteBits, Storable, Serialize)
 
 instance Show IxKey where
-  showsPrec p = showsPrec p . unIxKey
+  showsPrec _ (IxKey k) = showString "0x" . showHex k
 
 class ToKey a where
   toKey :: a -> IxKey
+
+type DocumentKey = IxKey
+type SortableKey = IxKey
+type UniqueKey   = IxKey
 
 -- Properties ------------------------------------------------------------------
 
@@ -106,13 +114,13 @@ newtype Reference a = Reference { unReference :: IxKey }
   deriving (Eq, Ord, Bounded, Num, Enum, Real, Integral, Serialize)
 
 instance Show (Reference a) where
-  showsPrec _ (Reference k) = showString "0x" . showHex k
+  showsPrec p = showsPrec p . unReference
 
 newtype Sortable a = Sortable { unSortable :: a }
   deriving (Eq, Ord, Bounded, Serialize)
 
 instance Show a => Show (Sortable a) where
-  showsPrec p (Sortable a) = showsPrec p a
+  showsPrec p = showsPrec p . unSortable
 
 instance ToKey (Sortable IxKey) where
   toKey (Sortable w) = w
@@ -139,7 +147,7 @@ newtype Unique a = Unique { unUnique :: a }
   deriving (Eq, Serialize)
 
 instance Show a => Show (Unique a) where
-  showsPrec p (Unique a) = showsPrec p a
+  showsPrec p = showsPrec p . unUnique
 
 instance Hashable a => ToKey (Unique (Sortable a)) where
   toKey (Unique (Sortable a)) = fromIntegral $ hash a
@@ -154,7 +162,7 @@ class Indexable a where
   isReference :: Proxy a -> Bool
   isReference _ = False
 
-  getUnique :: a -> Maybe IxKey
+  getUnique :: a -> Maybe UniqueKey
   getUnique _ = Nothing
 
 instance Indexable (Reference a) where
@@ -188,9 +196,9 @@ instance {-# OVERLAPPABLE #-} Hashable a => Indexable (Unique a) where
 -- Records ---------------------------------------------------------------------
 
 data Indexables = Indexables
-  { ixRefs :: [(String, IxKey)]
-  , ixInts :: [(String, IxKey)]
-  , ixUnqs :: [(String, IxKey)]
+  { ixReferences :: [(String, DocumentKey)]
+  , ixSortables  :: [(String, SortableKey)]
+  , ixUniques    :: [(String, UniqueKey)]
   } deriving (Show)
 
 class (Typeable a, Generic a, Serialize a) => Document a where
@@ -225,7 +233,7 @@ instance (GetIndexables a, Selector c) => GetIndexables (M1 S c a) where
 instance Indexable a => GetIndexables (K1 i a) where
   ggetIndexables n (K1 x) =
     if isReference (Proxy :: Proxy a)
-    then Indexables { ixRefs = vs, ixInts = [], ixUnqs = us }
-    else Indexables { ixRefs = [], ixInts = vs, ixUnqs = us }
+    then Indexables { ixReferences = vs, ixSortables = [], ixUniques = us }
+    else Indexables { ixReferences = [], ixSortables = vs, ixUniques = us }
     where vs = (\did -> (n, did)) <$> getIxValues x
           us = maybe [] (pure . (n,)) (getUnique x)

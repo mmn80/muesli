@@ -1,8 +1,8 @@
 -----------------------------------------------------------------------------
 -- |
 -- Module      : Database.Muesli.Indexes
--- Copyright   : (C) 2015 Călin Ardelean,
--- License     : MIT (see the file LICENSE.md)
+-- Copyright   : (c) 2015 Călin Ardelean
+-- License     : MIT
 --
 -- Maintainer  : Călin Ardelean <calinucs@gmail.com>
 -- Stability   : experimental
@@ -14,7 +14,7 @@
 module Database.Muesli.Indexes
   ( updateMainIdx
   , updateUnqIdx
-  , updateIntIdx
+  , updateSortIdx
   , updateRefIdx
   ) where
 
@@ -24,21 +24,21 @@ import qualified Data.IntSet           as Set
 import           Data.List             (foldl')
 import           Database.Muesli.State
 
-updateMainIdx :: MainIndex -> [DocRecord] -> MainIndex
+updateMainIdx :: MainIndex -> [LogRecord] -> MainIndex
 updateMainIdx = foldl' f
-  where f idx r = let did = fromIntegral (docID r) in
+  where f idx r = let did = fromIntegral (recDocumentKey r) in
                   let rs' = maybe [r] (r:) (Map.lookup did idx) in
                   Map.insert did rs' idx
 
-updateUnqIdx :: UniqueIndex -> [DocRecord] -> UniqueIndex
+updateUnqIdx :: UniqueIndex -> [LogRecord] -> UniqueIndex
 updateUnqIdx = foldl' f
-  where f idx r = foldl' g idx (docURefs r)
+  where f idx r = foldl' g idx (recUniques r)
           where
-            did = fromIntegral (docID r)
-            del = docDel r
-            g idx' ref =
-              let rpid = fromIntegral (irefPID ref) in
-              let rval = fromIntegral (irefVal ref) in
+            did = fromIntegral (recDocumentKey r)
+            del = recDeleted r
+            g idx' lnk =
+              let rpid = fromIntegral (fst lnk) in
+              let rval = fromIntegral (snd lnk) in
               case Map.lookup rpid idx' of
                 Nothing -> if del then idx'
                            else Map.insert rpid (Map.singleton rval did) idx'
@@ -46,15 +46,15 @@ updateUnqIdx = foldl' f
                   where is' = if del then Map.delete rval is
                               else Map.insert rval did is
 
-updateIntIdx :: SortIndex -> [DocRecord] -> SortIndex
-updateIntIdx = foldl' f
-  where f idx r = foldl' g idx (docIRefs r)
+updateSortIdx :: SortIndex -> [LogRecord] -> SortIndex
+updateSortIdx = foldl' f
+  where f idx r = foldl' g idx (recSortables r)
           where
-            did = fromIntegral (docID r)
-            del = docDel r
-            g idx' ref =
-              let rpid = fromIntegral (irefPID ref) in
-              let rval = fromIntegral (irefVal ref) in
+            did = fromIntegral (recDocumentKey r)
+            del = recDeleted r
+            g idx' lnk =
+              let rpid = fromIntegral (fst lnk) in
+              let rval = fromIntegral (snd lnk) in
               let sng = Set.singleton did in
               case Map.lookup rpid idx' of
                 Nothing -> if del then idx'
@@ -68,15 +68,15 @@ updateIntIdx = foldl' f
                                   where ss' = if del then Set.delete did ss
                                               else Set.insert did ss
 
-updateRefIdx :: FilterIndex -> [DocRecord] -> FilterIndex
+updateRefIdx :: FilterIndex -> [LogRecord] -> FilterIndex
 updateRefIdx = foldl' f
-  where f idx r = foldl' g idx (docDRefs r)
+  where f idx r = foldl' g idx (recReferences r)
           where
-            del = docDel r
-            g idx' ref =
-              let rpid = fromIntegral (drefPID ref) in
-              let rval = fromIntegral (drefDID ref) in
-              let sng = updateIntIdx Map.empty [r] in
+            del = recDeleted r
+            g idx' lnk =
+              let rpid = fromIntegral (fst lnk) in
+              let rval = fromIntegral (snd lnk) in
+              let sng = updateSortIdx Map.empty [r] in
               case Map.lookup rpid idx' of
                 Nothing -> if del then idx'
                            else Map.insert rpid (Map.singleton rval sng) idx'
@@ -85,4 +85,4 @@ updateRefIdx = foldl' f
                                 Nothing -> if del then is
                                            else Map.insert rval sng is
                                 Just ss -> Map.insert rval ss' is
-                                  where ss' = updateIntIdx ss [r]
+                                  where ss' = updateSortIdx ss [r]

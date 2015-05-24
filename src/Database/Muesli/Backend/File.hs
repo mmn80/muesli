@@ -1,21 +1,26 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies        #-}
 
+{-# OPTIONS_HADDOCK show-extensions #-}
+
 -----------------------------------------------------------------------------
 -- |
 -- Module      : Database.Muesli.Backend.File
--- Copyright   : (C) 2015 Călin Ardelean,
--- License     : MIT (see the file LICENSE.md)
+-- Copyright   : (c) 2015 Călin Ardelean
+-- License     : MIT
 --
 -- Maintainer  : Călin Ardelean <calinucs@gmail.com>
 -- Stability   : experimental
 -- Portability : portable
 --
 -- Binary seekable file backend that uses 'Prelude' functions.
+-- This module exports 'DbHandle', 'DataHandle' and 'LogState' instances.
 ----------------------------------------------------------------------------
 
 module Database.Muesli.Backend.File
-  () where
+  ( FileHandle
+  , FileLog (..)
+  ) where
 
 import           Control.Arrow                 ((&&&))
 import           Control.Exception             (throw)
@@ -36,71 +41,76 @@ import           System.IO                     (BufferMode (..), Handle,
                                                 hSetFileSize, hTell,
                                                 openBinaryFile, withBinaryFile)
 
-instance DbHandle Handle where
+-- | @newtype@ wrapper around 'Handle', so that we can accomodate other instances.
+newtype FileHandle = FileHandle { unIOHandle :: Handle }
+  deriving (Eq, Show)
+
+instance DbHandle FileHandle where
   openDb path = liftIO $ do
     hnd <- openBinaryFile path ReadWriteMode
     hSetBuffering hnd NoBuffering
-    return hnd
+    return $ FileHandle hnd
 
-  closeDb hnd = liftIO $ hClose hnd
+  closeDb hnd = liftIO . hClose $ unIOHandle hnd
 
-  withDb path = liftIO . withBinaryFile path ReadWriteMode
+  withDb path f = liftIO . withBinaryFile path ReadWriteMode $ f . FileHandle
 
   swapDb oldPath path = liftIO (renameFile path oldPath) >> openDb path
 
-instance DataHandle Handle where
+instance DataHandle FileHandle where
   readDocument hnd r = do
-    liftIO . hSeek hnd AbsoluteSeek . fromIntegral $ docAddr r
-    liftIO . hGet hnd . fromIntegral $ docSize r
+    liftIO . hSeek (unIOHandle hnd) AbsoluteSeek . fromIntegral $ recAddress r
+    liftIO . hGet (unIOHandle hnd) . fromIntegral $ recSize r
 
-  writeDocument r bs hnd = unless (docDel r) . liftIO $ do
-    let sz = fromIntegral $ docAddr r + docSize r
-    osz <- hFileSize hnd
+  writeDocument r bs hnd = unless (recDeleted r) . liftIO $ do
+    let sz = fromIntegral $ recAddress r + recSize r
+    let h = unIOHandle hnd
+    osz <- hFileSize h
     when (osz < sz) $ do
       let nsz = max sz $ osz + 4096
-      hSetFileSize hnd nsz
-    hSeek hnd AbsoluteSeek . fromIntegral $ docAddr r
-    hPut hnd bs
+      hSetFileSize h nsz
+    hSeek h AbsoluteSeek . fromIntegral $ recAddress r
+    hPut h bs
 
 data FileLog = FileLog
-  { flogHandle :: Handle
-  , flogPos    :: Addr
-  , flogSize   :: Size
+  { flogHandle :: FileHandle
+  , flogPos    :: DocAddress
+  , flogSize   :: DocSize
   } deriving (Show)
 
 instance LogState FileLog where
-  type LogHandle FileLog = Handle
+  type LogHandle FileLog = FileHandle
 
   logHandle = flogHandle
 
   logInit hnd = do
-    (pos, sz) <- readLogPos hnd
+    (pos, sz) <- readLogPos (unIOHandle hnd)
     return $ FileLog hnd pos sz
 
   logAppend l rs = do
-    let hnd = logHandle l
+    let hnd = unIOHandle $ logHandle l
     let pos = flogPos l
-    let pos' = pos + sum (map tRecSize rs)
+    let pos' = pos + sum (map sizeTransRecord rs)
     sz <- checkFileSize hnd (flogSize l) pos'
     liftIO . hSeek hnd AbsoluteSeek $ fromIntegral pos
-    forM_ rs $ writeLogTRec hnd
+    forM_ rs $ writeTransRecord hnd
     writeLogPos hnd $ fromIntegral pos'
     return l { flogPos = pos', flogSize = sz }
 
   logRead l = do
-    let hnd = logHandle l
+    let hnd = unIOHandle $ logHandle l
     pos <- liftIO $ hTell hnd
     if flogSize l == 0 || pos >= fromIntegral (flogPos l) - 1
     then return Nothing
     else do
-      r <- readLogTRec hnd
+      r <- readTransRecord hnd
       return $ Just r
 
-tRecSize :: TRec -> Size
-tRecSize r = fromIntegral $ case r of
-  Pending dr  -> 16 + ws * (3 + 2 * (length (docURefs dr) +
-                                     length (docIRefs dr) +
-                                     length (docDRefs dr)))
+sizeTransRecord :: TransRecord -> DocSize
+sizeTransRecord r = fromIntegral $ case r of
+  Pending dr  -> 16 + ws * (3 + 2 * (length (recUniques dr) +
+                                     length (recSortables dr) +
+                                     length (recReferences dr)))
   Completed _ -> 9
   where ws = sizeOf (0 :: IxKey)
 
@@ -112,22 +122,22 @@ writeBits :: (Storable a, MonadIO m) => Handle -> a -> m ()
 writeBits h w = liftIO . with w $ \ptr ->
   hPutBuf h ptr (sizeOf w)
 
-readLogPos :: MonadIO m => Handle -> m (Addr, Size)
+readLogPos :: MonadIO m => Handle -> m (DocAddress, DocSize)
 readLogPos h = liftIO $ do
   sz <- hFileSize h
-  if sz >= fromIntegral (sizeOf (0 :: Addr)) then do
+  if sz >= fromIntegral (sizeOf (0 :: DocAddress)) then do
     hSeek h AbsoluteSeek 0
     w <- readBits h
     return (w, fromIntegral sz)
   else
-    return (fromIntegral $ sizeOf (0 :: Addr), 0)
+    return (fromIntegral $ sizeOf (0 :: DocAddress), 0)
 
-writeLogPos :: MonadIO m => Handle -> Addr -> m ()
+writeLogPos :: MonadIO m => Handle -> DocAddress -> m ()
 writeLogPos h p = liftIO $ do
   hSeek h AbsoluteSeek 0
   writeBits h p
 
-checkFileSize :: MonadIO m => Handle -> Size -> Addr -> m Size
+checkFileSize :: MonadIO m => Handle -> DocSize -> DocAddress -> m DocSize
 checkFileSize hnd osz pos =
   if pos > osz then do
     let sz = max pos $ osz + 4096
@@ -135,8 +145,8 @@ checkFileSize hnd osz pos =
     return sz
   else return osz
 
-readLogTRec :: MonadIO m => Handle -> m TRec
-readLogTRec h = do
+readTransRecord :: MonadIO m => Handle -> m TransRecord
+readTransRecord h = do
   tag <- readBits h
   case tag of
     x | x == pndTag -> do
@@ -151,17 +161,17 @@ readLogTRec h = do
                _ -> logError h $
                       showString "True ('T') or False ('F') tag expected but " .
                       shows del . showString " found."
-      us <- readWordList h IntReference
-      is <- readWordList h IntReference
-      ds <- readWordList h DocReference
-      return $ Pending DocRecord { docID    = did
-                                 , docTID   = tid
-                                 , docURefs = us
-                                 , docIRefs = is
-                                 , docDRefs = ds
-                                 , docAddr  = adr
-                                 , docSize  = siz
-                                 , docDel   = dlb
+      us <- readWordList h
+      is <- readWordList h
+      ds <- readWordList h
+      return $ Pending LogRecord { recDocumentKey   = did
+                                 , recTransactionId = tid
+                                 , recUniques       = us
+                                 , recSortables     = is
+                                 , recReferences    = ds
+                                 , recAddress       = adr
+                                 , recSize          = siz
+                                 , recDeleted       = dlb
                                  }
     x | x == cmpTag -> do
       tid <- readBits h
@@ -169,34 +179,37 @@ readLogTRec h = do
     _ -> logError h $ showString "Pending ('p') or Completed ('c') tag expected but " .
            shows tag . showString " found."
 
-readWordList h con = do
+readWordList :: MonadIO m => Handle -> m [(PropertyKey, IxKey)]
+readWordList h = do
   sz <- readBits h
   replicateM (fromIntegral (sz :: Word16)) $ do
     pid <- readBits h
     val <- readBits h
-    return $ con pid val
+    return (pid, val)
 
-writeLogTRec :: MonadIO m => Handle -> TRec -> m ()
-writeLogTRec h t =
+writeTransRecord :: MonadIO m => Handle -> TransRecord -> m ()
+writeTransRecord h t =
   case t of
     Pending doc -> do
       writeBits h pndTag
-      writeBits h $ docTID doc
-      writeBits h $ docID doc
-      writeBits h $ docAddr doc
-      writeBits h $ docSize doc
-      writeBits h $ if docDel doc then truTag else flsTag
-      writeWordList $ (irefPID &&& irefVal) <$> docURefs doc
-      writeWordList $ (irefPID &&& irefVal) <$> docIRefs doc
-      writeWordList $ (drefPID &&& drefDID) <$> docDRefs doc
+      writeBits h $ recTransactionId doc
+      writeBits h $ recDocumentKey doc
+      writeBits h $ recAddress doc
+      writeBits h $ recSize doc
+      writeBits h $ if recDeleted doc then truTag else flsTag
+      writeWordList h $ recUniques doc
+      writeWordList h $ recSortables doc
+      writeWordList h $ recReferences doc
     Completed tid -> do
       writeBits h cmpTag
       writeBits h tid
-  where writeWordList rs = do
-          writeBits h (fromIntegral (length rs) :: Word16)
-          forM_ rs $ \(pid, val) -> do
-             writeBits h pid
-             writeBits h val
+
+writeWordList :: MonadIO m => Handle -> [(PropertyKey, IxKey)] -> m ()
+writeWordList h rs = do
+  writeBits h (fromIntegral (length rs) :: Word16)
+  forM_ rs $ \(pid, val) -> do
+     writeBits h pid
+     writeBits h val
 
 pndTag :: Word8
 pndTag = 0x70 -- ASCII 'p'

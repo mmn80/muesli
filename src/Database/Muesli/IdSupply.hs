@@ -1,10 +1,12 @@
 {-# LANGUAGE MultiWayIf #-}
 
+{-# OPTIONS_HADDOCK show-extensions #-}
+
 -----------------------------------------------------------------------------
 -- |
 -- Module      : Database.Muesli.IdSupply
--- Copyright   : (C) 2015 Călin Ardelean,
--- License     : MIT (see the file LICENSE.md)
+-- Copyright   : (c) 2015 Călin Ardelean
+-- License     : MIT
 --
 -- Maintainer  : Călin Ardelean <calinucs@gmail.com>
 -- Stability   : experimental
@@ -20,20 +22,19 @@ module Database.Muesli.IdSupply
   , alloc
   ) where
 
-import           Control.Exception     (throw)
-import           Data.IntMap.Strict    (IntMap)
-import qualified Data.IntMap.Strict    as Map
-import           Database.Muesli.Types (IxKey, DatabaseError (..))
+import           Control.Exception             (throw)
+import           Data.IntMap.Strict            (IntMap)
+import qualified Data.IntMap.Strict            as Map
+import           Database.Muesli.Backend.Types (DocSize)
+import           Database.Muesli.Types         (DatabaseError (..), DocumentKey,
+                                                IxKey)
 
-type IdSupply = IntMap Size
-
-type DID      = IxKey
-type Size     = IxKey
+type IdSupply = IntMap DocSize
 
 empty :: IdSupply
 empty = Map.singleton 1 (maxBound - 1)
 
-reserve :: DID -> IdSupply -> IdSupply
+reserve :: DocumentKey -> IdSupply -> IdSupply
 reserve tidb s = maybe s
   (\(st, szdb) ->
       let sz = fromIntegral szdb in
@@ -48,7 +49,7 @@ reserve tidb s = maybe s
   (Map.lookupLE tid s)
   where tid = fromIntegral tidb
 
-alloc :: IdSupply -> (DID, IdSupply)
+alloc :: IdSupply -> (DocumentKey, IdSupply)
 alloc s =
   case Map.lookupGE 0 s of
     Nothing -> throw $ IdAllocationError "ID allocation error: supply empty."

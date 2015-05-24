@@ -1,11 +1,13 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiWayIf                 #-}
 
+{-# OPTIONS_HADDOCK show-extensions #-}
+
 -----------------------------------------------------------------------------
 -- |
 -- Module      : Database.Muesli.Commit
--- Copyright   : (C) 2015 Călin Ardelean,
--- License     : MIT (see the file LICENSE.md)
+-- Copyright   : (c) 2015 Călin Ardelean
+-- License     : MIT
 --
 -- Maintainer  : Călin Ardelean <calinucs@gmail.com>
 -- Stability   : experimental
@@ -35,7 +37,7 @@ import           Data.List                 (foldl')
 import qualified Data.List                 as L
 import qualified Data.Map.Strict           as Map
 import           Data.Maybe                (fromMaybe)
-import qualified Database.Muesli.Allocator as Gaps
+import qualified Database.Muesli.Allocator as GapsIndex
 import qualified Database.Muesli.Cache     as Cache
 import           Database.Muesli.Indexes
 import           Database.Muesli.State
@@ -50,10 +52,10 @@ instance MonadIO m => MonadIO (Transaction l d m) where
   liftIO = Transaction . liftIO
 
 data TransactionState l d = TransactionState
-  { transHandle     :: Handle l d
-  , transTID        :: !TID
-  , transReadList   :: ![DID]
-  , transUpdateList :: ![(DocRecord, ByteString)]
+  { transHandle     :: !(Handle l d)
+  , transId         :: !TransactionId
+  , transReadList   :: ![DocumentKey]
+  , transUpdateList :: ![(LogRecord, ByteString)]
   }
 
 data TransactionAbort = AbortUnique String
@@ -64,9 +66,9 @@ data TransactionAbort = AbortUnique String
 instance Exception TransactionAbort
 
 runQuery :: (MonadIO m, LogState l) => Handle l d -> Transaction l d m a ->
-            m (Either TransactionAbort a)
+             m (Either TransactionAbort a)
 runQuery h (Transaction t) = do
-  tid <- mkNewTransId h
+  tid <- mkNewTransactionId h
   (a, q, u) <- runUserCode tid
   if null u then return $ Right a
   else withMaster h $ \m ->
@@ -89,16 +91,16 @@ runQuery h (Transaction t) = do
       (a, TransactionState _ _ q u) <- S.runStateT t
         TransactionState
           { transHandle     = h
-          , transTID        = tid
+          , transId         = tid
           , transReadList   = []
           , transUpdateList = []
           }
-      let u' = L.nubBy ((==) `on` docID . fst) u
+      let u' = L.nubBy ((==) `on` recDocumentKey . fst) u
       return (a, q, u')
 
     checkUnique u idx logp = all ck u
-      where ck (d, _) = docDel d || all (cku $ docID d) (docURefs d)
-            cku did (IntReference pid val) =
+      where ck (d, _) = recDeleted d || all (cku $ recDocumentKey d) (recUniques d)
+            cku did (pid, val) =
               cku' did (liftM fromIntegral $ IntMap.lookup (fromIntegral pid) idx >>=
                                              IntMap.lookup (fromIntegral val)) &&
               cku' did (findUnique pid val (concat $ Map.elems logp))
@@ -106,7 +108,7 @@ runQuery h (Transaction t) = do
 
     checkConflict tid logp logc q u = ck qs && ck us
       where
-        us = (\(d,_) -> (fromIntegral (docID d), ())) <$> u
+        us = (\(d,_) -> (fromIntegral (recDocumentKey d), ())) <$> u
         qs = (\k -> (fromIntegral k, ())) <$> q
         ck lst = Map.null (Map.intersection newPs ml) &&
                  Map.null (Map.intersection newCs ml)
@@ -114,22 +116,22 @@ runQuery h (Transaction t) = do
         newPs = snd $ Map.split tid logp
         newCs = snd $ Map.split tid logc
 
-    checkDelete m u = all ck . L.filter docDel $ map fst u
+    checkDelete m u = all ck . L.filter recDeleted $ map fst u
       where ck d = all (ckEmpty $ fromIntegral did) lst && all (ckPnd did) rs
-              where did = docID d
+              where did = recDocumentKey d
             lst = IntMap.elems $ refIdx m
             ckEmpty did idx =
               case IntMap.lookup did idx of
                 Nothing -> True
                 Just ss -> all null $ IntMap.elems ss
-            rs = L.filter (not . docDel) . map fst . concat . Map.elems $ logPend m
-            ckPnd did r = not . any ((did ==) . drefDID) $ docDRefs r
+            rs = L.filter (not . recDeleted) . map fst . concat . Map.elems $ logPend m
+            ckPnd did r = not . any ((did ==) . snd) $ recReferences r
 
     allocFold (ts, gs) (r, bs) =
-      if docDel r then ((r, bs):ts, gs)
+      if recDeleted r then ((r, bs):ts, gs)
       else ((r', bs):ts, gs')
-        where (a, gs') = Gaps.alloc gs $ docSize r
-              r' = r { docAddr = a }
+        where (a, gs') = GapsIndex.alloc gs $ recSize r
+              r' = r { recAddress = a }
 
 updateManThread :: (LogState l, DataHandle d) => Handle l d -> Bool -> IO ()
 updateManThread h w = do
@@ -144,7 +146,7 @@ updateManThread h w = do
       maybe (return True) (\(tid, rs) -> do
         withData h $ \(DataState hnd cache) -> do
           forM_ rs $ \(r, bs) -> writeDocument r bs hnd
-          let cache' = foldl' (\c (r, _) -> Cache.delete (fromIntegral $ docAddr r) c)
+          let cache' = foldl' (\c (r, _) -> Cache.delete (fromIntegral $ recAddress r) c)
                          cache rs
           return (DataState hnd cache', ())
         withMaster h $ \m -> do
@@ -156,9 +158,9 @@ updateManThread h w = do
                      , logPend  = lgp
                      , logComp  = lgc
                      , mainIdx  = updateMainIdx (mainIdx m) rs'
-                     , unqIdx   = updateUnqIdx (unqIdx m) rs'
-                     , intIdx   = updateIntIdx (intIdx m) rs'
-                     , refIdx   = updateRefIdx (refIdx m) rs'
+                     , unqIdx   = updateUnqIdx  (unqIdx m)  rs'
+                     , sortIdx  = updateSortIdx (sortIdx m) rs'
+                     , refIdx   = updateRefIdx  (refIdx m)  rs'
                      }
           return (m', null lgp))
     return (kill, (kill, wait))

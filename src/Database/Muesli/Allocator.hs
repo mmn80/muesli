@@ -1,8 +1,8 @@
 -----------------------------------------------------------------------------
 -- |
 -- Module      : Database.Muesli.Allocator
--- Copyright   : (C) 2015 Călin Ardelean,
--- License     : MIT (see the file LICENSE.md)
+-- Copyright   : (c) 2015 Călin Ardelean
+-- License     : MIT
 --
 -- Maintainer  : Călin Ardelean <calinucs@gmail.com>
 -- Stability   : experimental
@@ -26,29 +26,29 @@ import           Data.List             (foldl', sortOn)
 import           Data.Maybe            (fromMaybe)
 import           Database.Muesli.State
 
-empty :: Addr -> Gaps
+empty :: DocAddress -> GapsIndex
 empty sz = Map.singleton (fromIntegral $ maxBound - sz) [sz]
 
-add :: Size -> Addr -> Gaps -> Gaps
+add :: DocSize -> DocAddress -> GapsIndex -> GapsIndex
 add s addr gs = Map.insert sz (addr:as) gs
   where as = fromMaybe [] $ Map.lookup sz gs
         sz = fromIntegral s
 
-build :: MainIndex -> Gaps
-build idx = addTail . foldl' f (Map.empty, 0) . sortOn docAddr .
-                filter (not . docDel) . map head $ Map.elems idx
+build :: MainIndex -> GapsIndex
+build idx = addTail . foldl' f (Map.empty, 0) . sortOn recAddress .
+                filter (not . recDeleted) . map head $ Map.elems idx
   where
-    f (gs, addr) r = (gs', docAddr r + docSize r)
-      where gs' = if addr == docAddr r then gs
+    f (gs, addr) r = (gs', recAddress r + recSize r)
+      where gs' = if addr == recAddress r then gs
                   else add sz addr gs
-            sz = docAddr r - addr
+            sz = recAddress r - addr
     addTail (gs, addr) = add (maxBound - addr) addr gs
 
-buildExtra :: Addr -> [DocRecord] -> Gaps
+buildExtra :: DocAddress -> [LogRecord] -> GapsIndex
 buildExtra pos = foldl' f (empty pos)
-  where f gs r = add (docSize r) (docAddr r) gs
+  where f gs r = add (recSize r) (recAddress r) gs
 
-alloc :: Gaps -> Size -> (Addr, Gaps)
+alloc :: GapsIndex -> DocSize -> (DocAddress, GapsIndex)
 alloc gs s = let sz = fromIntegral s in
   case Map.lookupGE sz gs of
     Nothing -> throw $ DataAllocationError sz (fst <$> Map.lookupLT maxBound gs)

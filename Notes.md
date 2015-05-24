@@ -25,18 +25,18 @@ The handle is created by an `open` IO action, used for running transaction monad
 
 `mainIdx` is the primary index, holding records' locations in the data file.
 `gaps` is used for fast allocation.
-`intIdx` and `refIdx` are inverted indexes.
+`sortIdx` and `refIdx` are inverted indexes.
 
 `unqIdx` is used for unique fields.
 The `IntVal` is computed with the `Hashable` instance of the value type.
 The index is used for ensuring uniqueness, and also for lookup queries.
 
-`intIdx` indexes columns that hold Int-convertible values, like Date/Time.
+`sortIdx` indexes columns that hold Int-convertible values, like Date/Time.
 It is used for range queries.
 
 `refIdx` indexes document reference columns.
-`[DID]` is sorted on the `PropID` in the pair.
-There can be multiple copies for the same main `PropID`, but sorted on different columns.
+`[DID]` is sorted on the `PropertyKey` in the pair.
+There can be multiple copies for the same main `PropertyKey`, but sorted on different columns.
 Used for filter+range queries (filter of first prop, then range on second).
 
 `logPend` and `logComp` contain pending and completed transactions.
@@ -46,13 +46,13 @@ to clean completed transactions from `logComp`.
 ```haskell
 logHandle :: Handle
 keepTrans :: Bool
-logPend   :: TID -> [(DID, Addr, Size, Del, [(PropID, [DID])])]
-logComp   :: TID -> [(DID, Addr, Size, Del, [(PropID, [DID])])]
-gaps      :: Size -> [Addr]
-mainIdx   :: DID -> [(TID, Addr, Size, [(PropID, [DID])])]
-unqIdx    :: PropID -> IntVal -> DID
-intIdx    :: PropID -> IntVal -> [DID]
-refIdx    :: PropID -> [(PropID, DID -> [DID])]
+logPend   :: TID -> [(DID, DocAddress, DocSize, Del, [(PropertyKey, [DID])])]
+logComp   :: TID -> [(DID, DocAddress, DocSize, Del, [(PropertyKey, [DID])])]
+gaps      :: DocSize -> [DocAddress]
+mainIdx   :: DID -> [(TID, DocAddress, DocSize, [(PropertyKey, [DID])])]
+unqIdx    :: PropertyKey -> IntVal -> DID
+sortIdx    :: PropertyKey -> IntVal -> [DID]
+refIdx    :: PropertyKey -> [(PropertyKey, DID -> [DID])]
 ```
 
 ### Data State
@@ -72,7 +72,7 @@ dataCache  :: LRUCache
 Data Files Format
 -----------------
 
-`DID`, `Addr`, `Size` and `PropID` are aliases of `IxKey`, a newtype wrapper
+`DID`, `DocAddress`, `DocSize` and `PropertyKey` are aliases of `IxKey`, a newtype wrapper
 around `Int`.
 `TID` is auto-incremented `Word64`.
 The tags for `Pending`, `Completed` and `Del` are single bytes.
@@ -84,12 +84,12 @@ The pseudo-Haskell represents just a byte sequence in lexical order.
 ### Transaction Log File
 
 ```haskell
-logPos :: Addr
-recs   :: [TRec]
+logPos :: DocAddress
+recs   :: [TransRecord]
 
-TRec = Pending TID DID Addr Size Del UnqCount [(PropID, IntVal)]
-                                     ValCount [(PropID, IntVal)]
-                                     RefCount [(PropID, DID)]
+TransRecord = Pending TID DID DocAddress DocSize Del UnqCount [(PropertyKey, IntVal)]
+                                     ValCount [(PropertyKey, IntVal)]
+                                     RefCount [(PropertyKey, DID)]
      | Completed TID
 ```
 
@@ -137,7 +137,7 @@ update :: DID a -> a -> Trans ()
 delete :: DID a -> Trans ()
 ```
 
-Also range/page queries, and queries on the `intIdx` and `unqIdx`.
+Also range/page queries, and queries on the `sortIdx` and `unqIdx`.
 
 ### Running Transactions
 
@@ -145,7 +145,7 @@ Also range/page queries, and queries on the `intIdx` and `unqIdx`.
 runQuery :: Handle -> Trans a -> IO (Maybe a)
 
 ReadList   = [DID]
-UpdateList = [(DocRecord, ByteString)]
+UpdateList = [(LogRecord, ByteString)]
 
 ```
 ```
@@ -199,7 +199,7 @@ repeat:
       remove transaction from logPend
       if keepTrans or new pending transactions exist, add it to logComp
       if logPend is empty and not keepTrans, empty logComp
-      update mainIdx, unqIdx, intIdx, refIdx
+      update mainIdx, unqIdx, sortIdx, refIdx
       add "Completed: TID" to the transaction log
       update logPos in the transaction log
 ```
@@ -215,7 +215,7 @@ with master lock:
   keepTrans = True
 collect garbage from grabbed masterState
 reallocate records contiguously (empty gaps)
-rebuild mainIdx, unqIdx, intIdx, refIdx
+rebuild mainIdx, unqIdx, sortIdx, refIdx
 write new log file
 write new data file
 with UM lock:
@@ -223,7 +223,7 @@ with UM lock:
     update old logComp and logPend (reallocate)
     update new (empty) gaps from logComp and logPend
     write new transactions to new log & new data file
-    update new mainIdx, unqIdx, intIdx, refIdx from logComp
+    update new mainIdx, unqIdx, sortIdx, refIdx from logComp
     swap log files (close old handle; rename file; open new handle)
     keepTrans = False
   with data lock:

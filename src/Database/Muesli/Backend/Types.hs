@@ -1,11 +1,13 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TypeFamilies     #-}
 
+{-# OPTIONS_HADDOCK show-extensions #-}
+
 -----------------------------------------------------------------------------
 -- |
 -- Module      : Database.Muesli.Backend.Types
--- Copyright   : (C) 2015 Călin Ardelean,
--- License     : MIT (see the file LICENSE.md)
+-- Copyright   : (c) 2015 Călin Ardelean
+-- License     : MIT
 --
 -- Maintainer  : Călin Ardelean <calinucs@gmail.com>
 -- Stability   : experimental
@@ -15,18 +17,12 @@
 ----------------------------------------------------------------------------
 
 module Database.Muesli.Backend.Types
-  ( TID
-  , DID
-  , PropID
-  , UnqVal
-  , Addr
-  , Size
-  , DocRecord (..)
-  , DocReference (..)
-  , IntReference (..)
-  , TRec (..)
-  , isPending
-  , fromPending
+  ( TransactionId
+  , PropertyKey
+  , DocAddress
+  , DocSize
+  , LogRecord (..)
+  , TransRecord (..)
   , DbPath
   , DbHandle (..)
   , LogState (..)
@@ -36,45 +32,27 @@ module Database.Muesli.Backend.Types
 import           Control.Monad.Trans   (MonadIO)
 import           Data.ByteString       (ByteString)
 import           Data.Word             (Word64)
-import           Database.Muesli.Types (IxKey (..))
+import           Database.Muesli.Types (DocumentKey, IxKey (..), SortableKey,
+                                        UniqueKey)
 
-type TID    = Word64
-type DID    = IxKey
-type UnqVal = IxKey
-type PropID = IxKey
-type Addr   = IxKey
-type Size   = IxKey
+type TransactionId = Word64
+type PropertyKey   = IxKey
+type DocAddress    = IxKey
+type DocSize       = IxKey
 
-data DocRecord = DocRecord
-  { docID    :: !DID
-  , docTID   :: !TID
-  , docURefs :: ![IntReference]
-  , docIRefs :: ![IntReference]
-  , docDRefs :: ![DocReference]
-  , docAddr  :: !Addr
-  , docSize  :: !Size
-  , docDel   :: !Bool
+data LogRecord = LogRecord
+  { recTransactionId :: !TransactionId
+  , recDocumentKey   :: !DocumentKey
+  , recReferences    :: ![(PropertyKey, DocumentKey)]
+  , recSortables     :: ![(PropertyKey, SortableKey)]
+  , recUniques       :: ![(PropertyKey, UniqueKey)]
+  , recAddress       :: !DocAddress
+  , recSize          :: !DocSize
+  , recDeleted       :: !Bool
   } deriving (Show)
 
-data DocReference = DocReference
-  { drefPID :: !PropID
-  , drefDID :: !DID
-  } deriving (Show)
-
-data IntReference = IntReference
-  { irefPID :: !PropID
-  , irefVal :: !IxKey
-  } deriving (Show)
-
-data TRec = Pending DocRecord | Completed TID
+data TransRecord = Pending LogRecord | Completed TransactionId
   deriving (Show)
-
-isPending :: TRec -> Bool
-isPending (Pending _)   = True
-isPending (Completed _) = False
-
-fromPending :: TRec -> DocRecord
-fromPending (Pending r) = r
 
 type DbPath = String
 
@@ -84,13 +62,13 @@ class DbHandle a where
   withDb  :: MonadIO m => DbPath -> (a -> IO b) -> m b
   swapDb  :: MonadIO m => DbPath -> DbPath -> m a
 
-class Show a => LogState a where
+class (Show a, DbHandle (LogHandle a)) => LogState a where
   type LogHandle a :: *
-  logHandle :: DbHandle (LogHandle a) => a -> LogHandle a
+  logHandle :: a -> LogHandle a
   logInit   :: MonadIO m => LogHandle a -> m a
-  logAppend :: MonadIO m => a -> [TRec] -> m a
-  logRead   :: MonadIO m => a -> m (Maybe TRec)
+  logAppend :: MonadIO m => a -> [TransRecord] -> m a
+  logRead   :: MonadIO m => a -> m (Maybe TransRecord)
 
 class DbHandle a => DataHandle a where
-  readDocument :: MonadIO m => a -> DocRecord -> m ByteString
-  writeDocument :: MonadIO m => DocRecord -> ByteString -> a -> m ()
+  readDocument  :: MonadIO m => a -> LogRecord -> m ByteString
+  writeDocument :: MonadIO m => LogRecord -> ByteString -> a -> m ()

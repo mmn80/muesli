@@ -1,11 +1,12 @@
-{-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+
+{-# OPTIONS_HADDOCK show-extensions #-}
 
 -----------------------------------------------------------------------------
 -- |
 -- Module      : Database.Muesli.GC
--- Copyright   : (C) 2015 Călin Ardelean,
--- License     : MIT (see the file LICENSE.md)
+-- Copyright   : (c) 2015 Călin Ardelean
+-- License     : MIT
 --
 -- Maintainer  : Călin Ardelean <calinucs@gmail.com>
 -- Stability   : experimental
@@ -33,18 +34,17 @@ import           Database.Muesli.State
 import           Database.Muesli.Types
 import           Foreign                   (sizeOf)
 
-gcThread :: forall l d. (LogState l, DbHandle (LogHandle l), DataHandle d) =>
-                         Handle l d -> IO ()
+gcThread :: forall l d. (LogState l, DataHandle d) => Handle l d -> IO ()
 gcThread h = do
   sgn <- withGC h $ \sgn -> do
     when (sgn == PerformGC) $ do
       (mainIdxOld, logCompOld) <- withMaster h $ \m ->
         return (m { keepTrans = True }, (mainIdx m, logComp m))
-      let rs  = map head . filter (not . any docDel) $ IntMap.elems mainIdxOld
+      let rs  = map head . filter (not . any recDeleted) $ IntMap.elems mainIdxOld
       let (rs2, dpos) = realloc 0 rs
-      let rs' = sortOn docTID $ map fst rs2
-      let ts  = concatMap toTRecs $ groupBy ((==) `on` docTID) rs'
-      let ids = foldl' (\s r -> Ids.reserve (docID r) s) Ids.empty .
+      let rs' = sortOn recTransactionId $ map fst rs2
+      let ts  = concatMap toTransRecord $ groupBy ((==) `on` recTransactionId) rs'
+      let ids = foldl' (\s r -> Ids.reserve (recDocumentKey r) s) Ids.empty .
                 map fromPending $ filter isPending ts
       let logPath = logFilePath (unHandle h)
       let logPathNew = logPath ++ ".new"
@@ -56,7 +56,7 @@ gcThread h = do
       buildDataFile dataPathNew rs2 h
       let mIdx = updateMainIdx IntMap.empty rs'
       let uIdx = updateUnqIdx  IntMap.empty rs'
-      let iIdx = updateIntIdx  IntMap.empty rs'
+      let iIdx = updateSortIdx IntMap.empty rs'
       let rIdx = updateRefIdx  IntMap.empty rs'
       when (forceEval mIdx iIdx rIdx) $ withUpdateMan h $ \kill -> do
         withMaster h $ \nm -> do
@@ -66,14 +66,14 @@ gcThread h = do
           let ncrs = fst <$> ncrs'
           unless (null ncrs) . withDb logPathNew $ \hnd -> do
             st <- logInit hnd
-            logAppend (st :: l) (toTRecs ncrs)
+            logAppend (st :: l) (toTransRecord ncrs)
             return ()
           st <- swapDb logPath logPathNew >>= logInit
           buildDataFile dataPathNew ncrs' h
-          let gs = Gaps.buildExtra dpos'' . filter docDel $
+          let gs = Gaps.buildExtra dpos'' . filter recDeleted $
                    ncrs ++ (map fst . concat $ Map.elems logp')
-          let m = MasterState { logState = st
-                              , topTID    = topTID nm
+          let m = MasterState { logState  = st
+                              , topTid    = topTid nm
                               , idSupply  = ids
                               , keepTrans = False
                               , gaps      = gs
@@ -81,7 +81,7 @@ gcThread h = do
                               , logComp   = Map.empty
                               , mainIdx   = updateMainIdx mIdx ncrs
                               , unqIdx    = updateUnqIdx  uIdx ncrs
-                              , intIdx    = updateIntIdx  iIdx ncrs
+                              , sortIdx   = updateSortIdx iIdx ncrs
                               , refIdx    = updateRefIdx  rIdx ncrs
                               }
           return (m, ())
@@ -95,17 +95,24 @@ gcThread h = do
     threadDelay $ 1000 * 1000
     gcThread h
 
-toTRecs :: [DocRecord] -> [TRec]
-toTRecs rs = foldl' (\ts r -> Pending r : ts)
-             [Completed . docTID $ head rs] rs
+isPending :: TransRecord -> Bool
+isPending (Pending _)   = True
+isPending (Completed _) = False
 
-realloc :: Addr -> [DocRecord] -> ([(DocRecord, DocRecord)], Addr)
+fromPending :: TransRecord -> LogRecord
+fromPending (Pending r) = r
+
+toTransRecord :: [LogRecord] -> [TransRecord]
+toTransRecord rs = foldl' (\ts r -> Pending r : ts)
+                   [Completed . recTransactionId $ head rs] rs
+
+realloc :: DocAddress -> [LogRecord] -> ([(LogRecord, LogRecord)], DocAddress)
 realloc st = foldl' f ([], st)
   where f (nrs, pos) r =
-          if docDel r then ((r, r) : nrs, pos)
-          else ((r { docAddr = pos }, r) : nrs, pos + docSize r)
+          if recDeleted r then ((r, r) : nrs, pos)
+          else ((r { recAddress = pos }, r) : nrs, pos + recSize r)
 
-realloc' :: Addr -> LogPending -> (LogPending, Addr)
+realloc' :: DocAddress -> PendingIndex -> (PendingIndex, DocAddress)
 realloc' st idx = (Map.fromList l, pos)
   where (l, pos) = foldl' f ([], st) $ Map.toList idx
         f (lst, p) (tid, rs) = ((tid, rs') : lst, p')
@@ -118,7 +125,7 @@ forceEval mIdx iIdx rIdx = IntMap.notMember (-1) mIdx &&
                            IntMap.size rIdx > (-1)
 
 buildDataFile :: forall m l d. (MonadIO m, DataHandle d) => FilePath ->
-                 [(DocRecord, DocRecord)] -> Handle l d -> m ()
+                 [(LogRecord, LogRecord)] -> Handle l d -> m ()
 buildDataFile path rs h =
   withDb path $ \hnd ->
     forM_ rs $ \(r, oldr) -> do
