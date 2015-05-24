@@ -14,7 +14,6 @@
 -- Portability : portable
 --
 -- Binary seekable file backend that uses 'Prelude' functions.
--- This module exports 'DbHandle', 'DataHandle' and 'LogState' instances.
 ----------------------------------------------------------------------------
 
 module Database.Muesli.Backend.File
@@ -22,7 +21,6 @@ module Database.Muesli.Backend.File
   , FileLog (..)
   ) where
 
-import           Control.Arrow                 ((&&&))
 import           Control.Exception             (throw)
 import           Control.Monad                 (forM_, replicateM, unless, when)
 import           Control.Monad.Trans           (MonadIO (liftIO))

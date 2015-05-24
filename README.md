@@ -5,15 +5,16 @@ A simple [document-oriented database][nosql] engine for Haskell.
 
 Use cases
 ---------
-* store for p2p / cloud nodes, mobile apps, etc.
+* backing store for p2p / cloud nodes, mobile apps, etc.
 * higher capacity replacement for *acid-state* (only indexes are held in memory).
-* "no external dependency" substitute for *SQLite*, *CouchDB* and the like
+* "no external dependency" substitute for *SQLite*
 (potentially easier to build and use on mobile devices, or even port to *GHCJS*).
+* *ACID*ic replacement for *CouchDB* and the like.
 
 Features
 --------
 * **ACID transactions** implemented on the [MVCC][] model.
-* **automatic index management** based on tags added to fields' types
+* **automatic index management** based on tags prepended to fields' types
 (see example below).
 * **minimal boilerplate**: instead of *TemplateHaskell* we use
 [`GHC.Generics`][gen] and [`deriving`][der].
@@ -29,11 +30,14 @@ SELECT TOP p * FROM t WHERE c = k AND o < s ORDER BY o DESC
 IDs are tagged with a phantom type and created only by the database.
 There are also `Num`/`Integral` instances to support more generic apps,
 but normally those are not needed.
-* only `Prelude` functions for file I/O, **no dependencies on C libraries**
-(mmap, kv stores, etc.)
+* easily implementable **multiple backends** supported: currently *file*, and
+soon (:tm:) *in-memory*, *remote*.
+* only `Prelude` functions in the default file backend, **no dependencies on C
+libraries** (mmap, kv stores, etc.)
+* **replication**: soon (:tm:)
 
-*Note: some of these features become misfeatures for certain scenarios when
-either a pure in-memory cache, or a "real" database may be more appropriate.*
+*Note: some of these features become misfeatures for certain scenarios which
+would make either a pure in-memory cache, or a real database more appropriate.*
 
 Example use
 -----------
@@ -79,18 +83,18 @@ inserts or updates depending on result):
 
 import Database.Muesli.Query
 
-updatePerson :: String -> String -> Transaction (Reference Person, Person)
+updatePerson :: String -> String -> Transaction l m (Reference Person, Person)
 updatePerson name email = do
   let name' = Sortable name
   let p = Person name' email
   pid <- updateUnique "personName" (Unique name') p
   return (pid, p)
 
-postsByContributor :: Reference Person -> Transaction [(Reference BlogPost, BlogPost)]
-postsByContributor pid =
+postsByContrib :: Reference Person -> Transaction l m [(Reference BlogPost, BlogPost)]
+postsByContrib pid =
   filter (Just pid) Nothing Nothing "postContributors" "postTitle" 1000
 
-flagContributor :: Reference Person -> Transaction ()
+flagContributor :: Reference Person -> Transaction l m ()
 flagContributor pid = do
   is <- postsByContributor pid
   forM_ is $ \(bpid, bp) ->
@@ -98,15 +102,18 @@ flagContributor pid = do
 ```
 
 Then you can run these transactions with `runQuery` inside some `MonadIO` context.
-Note that `Transaction` itself is an instance of `MonadIO`,
-so you can do arbitrary IO inside.
+Note that `Transaction` itself is an instance of `MonadIO`, so you can do
+arbitrary IO inside.
+The `l` parameter specifies which storage backend you use.
+Currently only a binary file backend is implemented, used with `Handle FileLog`.
 
 ```Haskell
 import Database.Muesli.Query
 import Database.Muesli.Handle
+import Database.Muesli.Backend.File
 
-flagIt :: (MonadIO m) => Handle -> String -> String ->
-                         m (Either TransactionAbort ())
+flagIt :: (MonadIO m, LogState l) => Handle l -> String -> String ->
+           m (Either TransactionAbort ())
 flagIt h name email = runQuery h $ do
   (pid, _) <- updatePerson name email
   flagContributor pid
@@ -114,7 +121,7 @@ flagIt h name email = runQuery h $ do
 main :: IO ()
 main = bracket
   (putStrLn "opening DB..." >> open (Just "blog.log") (Just "blog.dat"))
-  (\h -> putStrLn "closing DB..." >> close h)
+  (\(h :: Handle FileLog) -> putStrLn "closing DB..." >> close h)
   (\h -> flagIt h "Bender Bending Rodríguez" "bender@ilovebender.com")
 
 ```
@@ -125,6 +132,7 @@ TODO
 - [ ] queries that only return keys (no data file IO)
 - [ ] blocking version of `runQuery`
 - [ ] testing it on mobile devices
+- [ ] in-memory backend compatible with `mmap`; also, a remote backend
 - [ ] static property names, but no ugly `Proxy :: Proxy "FieldName"` stuff
 - [ ] support for extensible records ("lax" `Serialize` instance),
 live up to the "document-oriented" label, but this should be optional
