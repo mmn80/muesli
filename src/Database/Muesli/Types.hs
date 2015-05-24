@@ -20,6 +20,26 @@
 -- Portability : portable
 --
 -- Muesli markup types and typeclasses.
+--
+-- Normally, with the @DeriveAnyClass@ and @DeriveGeneric@ extensions enabled,
+-- types that can be used as documents need a
+--
+-- @
+-- deriving (Generic, Serialize)
+-- @
+--
+-- clause, and a separate empty 'Document' instance. For field types,
+-- the following will suffice:
+--
+-- @
+-- deriving (Generic, Serialize, Indexable)
+-- @
+--
+-- Then 'Reference', 'Sortable' and 'Unique' can be used inside to mark up
+-- the fields that will automatically get indexed, and thus become queryable
+-- with the primitives in the "Database.Muesli.Query" module.
+-- Also, the record syntax must be used and the accesor name will become the
+-- property name used in queries.
 ----------------------------------------------------------------------------
 
 module Database.Muesli.Types
@@ -28,7 +48,7 @@ module Database.Muesli.Types
     Reference (..)
   , Sortable (..)
   , Unique (..)
--- * Main classes
+-- * Indexable value classes
   , Indexable (..)
   , Document (..)
   , Indexables (..)
@@ -69,7 +89,7 @@ data DatabaseError
   -- | Thrown after deserialization errors.
   -- Holds starting position, size, and a message.
   | DataParseError Int Int String
-  -- | ID allocation failure. For instance, full address space.
+  -- | ID allocation failure. For instance, full address space on a 32 bit machine.
   | IdAllocationError String
   -- | Data allocation failure.
   -- Containes the size requested, the biggest available gap, and a message.
@@ -86,6 +106,10 @@ newtype IxKey = IxKey { unIxKey :: Int }
 instance Show IxKey where
   showsPrec _ (IxKey k) = showString "0x" . showHex k
 
+-- | Class used to convert indexable field & query argument values to keys.
+--
+-- It is possibly needed for users to write instances for 'IxKey'-convertible
+-- primitive types, other then the provided 'Bool', 'Int' and 'UTCTime'.
 class ToKey a where
   toKey :: a -> IxKey
 
@@ -93,8 +117,11 @@ type DocumentKey = IxKey
 type SortableKey = IxKey
 type UniqueKey   = IxKey
 
--- Properties ------------------------------------------------------------------
-
+-- | With the @OverloadedStrings@ extension, or directly using the 'IsString'
+-- instance, field names specified in query arguments are converted to
+-- 'Property'. An 'IxKey' is computed by hashing the property name together
+-- with the 'Data.Typeable.TypeRep' of the phantom argument.
+-- This key is used in indexes.
 newtype Property a = Property { unProperty :: (IxKey, String) }
 
 instance Eq (Property a) where
@@ -108,14 +135,29 @@ instance Typeable a => IsString (Property a) where
   fromString s = Property (pid, s)
     where pid = fromIntegral $ hash (show $ typeRep (Proxy :: Proxy a), s)
 
--- Values ----------------------------------------------------------------------
-
+-- | 'Reference' fields are pointers to other 'Document's. They are
+-- indexed automatically and can be queried with 'Database.Muesli.Query.filter'.
+--
+-- To ensure type safety, use and store only references returned by the
+-- primitive queries, like 'Database.Muesli.Query.insert',
+-- 'Database.Muesli.Query.range' or 'Database.Muesli.Query.filter'.
+-- Numerical instances like 'Num' or 'Integral' are provided to support
+-- generic database programs that take the responsibility of maintaining
+-- invariants upon themselves. In this context, type safety means that it is
+-- impossible in normal operation to try and deserialize a document at a wrong
+-- type or address (note that all primitive query functions are polymorphic),
+-- and risk getting bogus data without errors being reported.
 newtype Reference a = Reference { unReference :: IxKey }
   deriving (Eq, Ord, Bounded, Num, Enum, Real, Integral, Serialize)
 
 instance Show (Reference a) where
   showsPrec p = showsPrec p . unReference
 
+-- | Marks a field available for sorting and 'range' queries. Indexing requires
+-- a 'ToKey' instance. Apart from the provided 'Bool', 'Int' and 'UTCTime'
+-- instances, there is an overlappable fallback instance based on converting
+-- the 'Show' string representation to an 'IxKey' by taking the first
+-- 4 or 8 bytes. This is good enough for primitive string sorting.
 newtype Sortable a = Sortable { unSortable :: a }
   deriving (Eq, Ord, Bounded, Serialize)
 
@@ -143,6 +185,12 @@ instance {-# OVERLAPPABLE #-} Show a => ToKey (Sortable a) where
                   '"':as -> as
                   ss     -> ss
 
+-- | 'Unique' fields act as primary keys, and can be queried with
+-- 'Database.Muesli.Query.lookupUnique' and 'Database.Muesli.Query.updateUnique'.
+-- The 'Hashable' instance is used to generate the key.
+--
+-- For fields that need to be both unique and sortable, use
+-- @'Unique' ('Sortable' a)@ rather then the other way around.
 newtype Unique a = Unique { unUnique :: a }
   deriving (Eq, Serialize)
 
@@ -154,6 +202,16 @@ instance Hashable a => ToKey (Unique (Sortable a)) where
 
 instance {-# OVERLAPPABLE #-} Hashable a => ToKey (Unique a) where
   toKey (Unique a) = fromIntegral $ hash a
+
+-- | This class is used by the generic scrapper to extract indexable keys
+-- from any 'Document' 's fields. There are instances for 'Reference', 'Sortable'
+-- and 'Unique', a general 'Foldable' instance, and a special one for 'Maybe'
+-- that converts 'Nothing' into 0, such that null values will be indexed too,
+-- and become queryable with 'Database.Muesli.Query.filter'.
+--
+-- Users are not expected to need writing instances for this class.
+-- They can rather be generated automatically with the @DeriveAnyClass@
+-- extension.
 
 class Indexable a where
   getIxValues :: a -> [IxKey]
@@ -193,14 +251,16 @@ instance (Hashable a, Indexable (Sortable a)) => Indexable (Unique (Sortable a))
 instance {-# OVERLAPPABLE #-} Hashable a => Indexable (Unique a) where
   getUnique (Unique a) = Just . fromIntegral $ hash a
 
--- Records ---------------------------------------------------------------------
-
+-- | Data type used by the key scrapper to collect keys while traversing
+-- generically user types.
 data Indexables = Indexables
   { ixReferences :: [(String, DocumentKey)]
   , ixSortables  :: [(String, SortableKey)]
   , ixUniques    :: [(String, UniqueKey)]
   } deriving (Show)
 
+-- | Class used by the generic key scrapper to extract indexing information
+-- from user types. Only an empty instance needs to be added in user code.
 class (Typeable a, Generic a, Serialize a) => Document a where
   getIndexables :: a -> Indexables
   default getIndexables :: (GetIndexables (Rep a)) => a -> Indexables
