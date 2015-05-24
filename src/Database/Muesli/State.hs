@@ -51,21 +51,21 @@ import           Database.Muesli.IdSupply      (IdSupply)
 import qualified Database.Muesli.IdSupply      as Ids
 import           Database.Muesli.Types
 
-newtype Handle l d = Handle { unHandle :: DBState l d } deriving (Eq)
+newtype Handle l = Handle { unHandle :: DBState l } deriving (Eq)
 
-instance Show (Handle l d) where
+instance Show (Handle l) where
   showsPrec p = showsPrec p . logFilePath . unHandle
 
-data DBState l d = DBState
+data DBState l = DBState
   { logFilePath  :: FilePath
   , dataFilePath :: FilePath
   , masterState  :: MVar (MasterState l)
-  , dataState    :: MVar (DataState d)
+  , dataState    :: MVar (DataState l)
   , updateMan    :: MVar Bool
   , gcState      :: MVar GCState
   }
 
-instance Eq (DBState l d) where
+instance Eq (DBState l) where
   s == s' = logFilePath s == logFilePath s'
 
 type MainIndex      = IntMap [LogRecord]
@@ -90,19 +90,19 @@ data MasterState l = MasterState
   , refIdx    :: !FilterIndex
   }
 
-data DataState d = DataState
-  { dataHandle :: !d
+data DataState l = DataState
+  { dataHandle :: !(DataHandleOf l)
   , dataCache  :: !LRUCache
   }
 
 data GCState = IdleGC | PerformGC | KillGC deriving (Eq)
 
-mkNewTransactionId :: MonadIO m => Handle l d -> m TransactionId
+mkNewTransactionId :: MonadIO m => Handle l -> m TransactionId
 mkNewTransactionId h = withMaster h $ \m ->
   let tid = topTid m + 1 in
   return (m { topTid = tid }, tid)
 
-mkNewDocumentKey :: MonadIO m => Handle l d -> m DocumentKey
+mkNewDocumentKey :: MonadIO m => Handle l -> m DocumentKey
 mkNewDocumentKey h = withMaster h $ \m ->
   let (tid, s) = Ids.alloc (idSupply m) in
   return (m { idSupply = s }, tid)
@@ -111,12 +111,12 @@ findUnique :: PropertyKey -> UniqueKey -> [(LogRecord, a)] -> Maybe DocumentKey
 findUnique p u rs = fmap recDocumentKey . find findR $ map fst rs
   where findR = elem (p, u) . recUniques
 
-withMasterLock :: MonadIO m => Handle l d -> (MasterState l -> IO a) -> m a
+withMasterLock :: MonadIO m => Handle l -> (MasterState l -> IO a) -> m a
 withMasterLock h = liftIO . bracket
   (takeMVar . masterState $ unHandle h)
   (putMVar . masterState $ unHandle h)
 
-withMaster :: MonadIO m => Handle l d -> (MasterState l -> IO (MasterState l, a)) -> m a
+withMaster :: MonadIO m => Handle l -> (MasterState l -> IO (MasterState l, a)) -> m a
 withMaster h f = liftIO $ bracketOnError
   (takeMVar . masterState $ unHandle h)
   (putMVar . masterState $ unHandle h)
@@ -125,12 +125,12 @@ withMaster h f = liftIO $ bracketOnError
     putMVar (masterState $ unHandle h) m'
     return a)
 
-withDataLock :: MonadIO m => Handle l d -> (DataState d -> IO a) -> m a
+withDataLock :: MonadIO m => Handle l -> (DataState l -> IO a) -> m a
 withDataLock h = liftIO . bracket
   (takeMVar . dataState $ unHandle h)
   (putMVar . dataState $ unHandle h)
 
-withData :: MonadIO m => Handle l d -> (DataState d -> IO (DataState d, a)) -> m a
+withData :: MonadIO m => Handle l -> (DataState l -> IO (DataState l, a)) -> m a
 withData h f = liftIO $ bracketOnError
   (takeMVar . dataState $ unHandle h)
   (putMVar . dataState $ unHandle h)
@@ -139,7 +139,7 @@ withData h f = liftIO $ bracketOnError
     putMVar (dataState $ unHandle h) d'
     return a)
 
-withUpdateMan :: MonadIO m => Handle l d -> (Bool -> IO (Bool, a)) -> m a
+withUpdateMan :: MonadIO m => Handle l -> (Bool -> IO (Bool, a)) -> m a
 withUpdateMan h f = liftIO $ bracketOnError
   (takeMVar . updateMan $ unHandle h)
   (putMVar . updateMan $ unHandle h)
@@ -148,7 +148,7 @@ withUpdateMan h f = liftIO $ bracketOnError
     putMVar (updateMan $ unHandle h) kill'
     return a)
 
-withGC :: MonadIO m => Handle l d -> (GCState -> IO (GCState, a)) -> m a
+withGC :: MonadIO m => Handle l -> (GCState -> IO (GCState, a)) -> m a
 withGC h f = liftIO $ bracketOnError
   (takeMVar . gcState $ unHandle h)
   (putMVar . gcState $ unHandle h)

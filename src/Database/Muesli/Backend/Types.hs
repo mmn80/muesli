@@ -25,8 +25,8 @@ module Database.Muesli.Backend.Types
   , TransRecord (..)
   , DbPath
   , DbHandle (..)
-  , LogState (..)
   , DataHandle (..)
+  , LogState (..)
   ) where
 
 import           Control.Monad.Trans   (MonadIO)
@@ -62,13 +62,14 @@ class DbHandle a where
   withDb  :: MonadIO m => DbPath -> (a -> IO b) -> m b
   swapDb  :: MonadIO m => DbPath -> DbPath -> m a
 
-class (Show a, DbHandle (LogHandle a)) => LogState a where
-  type LogHandle a :: *
-  logHandle :: a -> LogHandle a
-  logInit   :: MonadIO m => LogHandle a -> m a
-  logAppend :: MonadIO m => a -> [TransRecord] -> m a
-  logRead   :: MonadIO m => a -> m (Maybe TransRecord)
-
 class DbHandle a => DataHandle a where
   readDocument  :: MonadIO m => a -> LogRecord -> m ByteString
   writeDocument :: MonadIO m => LogRecord -> ByteString -> a -> m ()
+
+class (Show a, DbHandle (LogHandleOf a), DataHandle (DataHandleOf a)) => LogState a where
+  type LogHandleOf  a :: *
+  type DataHandleOf a :: *
+  logHandle :: a -> LogHandleOf a
+  logInit   :: MonadIO m => LogHandleOf a -> m a
+  logAppend :: MonadIO m => a -> [TransRecord] -> m a
+  logRead   :: MonadIO m => a -> m (Maybe TransRecord)

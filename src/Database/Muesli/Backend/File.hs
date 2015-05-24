@@ -79,7 +79,8 @@ data FileLog = FileLog
   } deriving (Show)
 
 instance LogState FileLog where
-  type LogHandle FileLog = FileHandle
+  type LogHandleOf FileLog = FileHandle
+  type DataHandleOf FileLog = FileHandle
 
   logHandle = flogHandle
 

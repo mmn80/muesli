@@ -34,7 +34,7 @@ import           Database.Muesli.State
 import           Database.Muesli.Types
 import           Foreign                   (sizeOf)
 
-gcThread :: forall l d. (LogState l, DataHandle d) => Handle l d -> IO ()
+gcThread :: forall l. LogState l => Handle l -> IO ()
 gcThread h = do
   sgn <- withGC h $ \sgn -> do
     when (sgn == PerformGC) $ do
@@ -124,10 +124,10 @@ forceEval mIdx iIdx rIdx = IntMap.notMember (-1) mIdx &&
                            IntMap.size iIdx > (-1) &&
                            IntMap.size rIdx > (-1)
 
-buildDataFile :: forall m l d. (MonadIO m, DataHandle d) => FilePath ->
-                 [(LogRecord, LogRecord)] -> Handle l d -> m ()
+buildDataFile :: forall m l. (MonadIO m, LogState l) => FilePath ->
+                 [(LogRecord, LogRecord)] -> Handle l -> m ()
 buildDataFile path rs h =
   withDb path $ \hnd ->
     forM_ rs $ \(r, oldr) -> do
       bs <- withDataLock h $ \(DataState dh _) -> readDocument dh oldr
-      writeDocument r bs (hnd :: d)
+      writeDocument r bs (hnd :: DataHandleOf l)

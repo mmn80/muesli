@@ -44,15 +44,15 @@ import           Database.Muesli.State
 import           Database.Muesli.Types
 import           Prelude                   hiding (filter, lookup)
 
-newtype Transaction l d m a = Transaction
-  { unTransaction :: StateT (TransactionState l d) m a }
+newtype Transaction l m a = Transaction
+  { unTransaction :: StateT (TransactionState l) m a }
   deriving (Functor, Applicative, Monad)
 
-instance MonadIO m => MonadIO (Transaction l d m) where
+instance MonadIO m => MonadIO (Transaction l m) where
   liftIO = Transaction . liftIO
 
-data TransactionState l d = TransactionState
-  { transHandle     :: !(Handle l d)
+data TransactionState l = TransactionState
+  { transHandle     :: !(Handle l)
   , transId         :: !TransactionId
   , transReadList   :: ![DocumentKey]
   , transUpdateList :: ![(LogRecord, ByteString)]
@@ -65,7 +65,7 @@ data TransactionAbort = AbortUnique String
 
 instance Exception TransactionAbort
 
-runQuery :: (MonadIO m, LogState l) => Handle l d -> Transaction l d m a ->
+runQuery :: (MonadIO m, LogState l) => Handle l -> Transaction l m a ->
              m (Either TransactionAbort a)
 runQuery h (Transaction t) = do
   tid <- mkNewTransactionId h
@@ -133,7 +133,7 @@ runQuery h (Transaction t) = do
         where (a, gs') = GapsIndex.alloc gs $ recSize r
               r' = r { recAddress = a }
 
-updateManThread :: (LogState l, DataHandle d) => Handle l d -> Bool -> IO ()
+updateManThread :: LogState l => Handle l -> Bool -> IO ()
 updateManThread h w = do
   (kill, wait) <- withUpdateMan h $ \kill -> do
     wait <- if kill then return True else do

@@ -42,8 +42,7 @@ import           Database.Muesli.Types
 import           Foreign                       (sizeOf)
 import           System.FilePath               ((</>))
 
-open :: (MonadIO m, LogState l, DataHandle d) =>
-         Maybe DbPath -> Maybe DbPath -> m (Handle l d)
+open :: (MonadIO m, LogState l) => Maybe DbPath -> Maybe DbPath -> m (Handle l)
 open lf df = do
   let logPath = fromMaybe ("data" </> "docdb.log") lf
   let datPath = fromMaybe ("data" </> "docdb.dat") df
@@ -58,7 +57,7 @@ open lf df = do
                       , logComp   = Map.empty
                       , mainIdx   = IntMap.empty
                       , unqIdx    = IntMap.empty
-                      , sortIdx    = IntMap.empty
+                      , sortIdx   = IntMap.empty
                       , refIdx    = IntMap.empty
                       }
   m' <- readLog m
@@ -110,10 +109,10 @@ readLog m = do
                         , refIdx   = updateRefIdx (refIdx m) rs
                         }
 
-performGC :: MonadIO m => Handle l d -> m ()
+performGC :: MonadIO m => Handle l -> m ()
 performGC h = withGC h . const $ return (PerformGC, ())
 
-debug :: (MonadIO m, LogState l) => Handle l d -> Bool -> Bool -> m String
+debug :: (MonadIO m, LogState l) => Handle l -> Bool -> Bool -> m String
 debug h sIdx sCache = do
   mstr <- withMasterLock h $ \m -> return $
     showsH   "logState  : "    (logState m) .
@@ -136,7 +135,7 @@ debug h sIdx sCache = do
   return $ mstr . dstr $ ""
   where showsH s a = showString s . shows a
 
-close :: (MonadIO m, LogState l, DbHandle d) => Handle l d -> m ()
+close :: (MonadIO m, LogState l) => Handle l -> m ()
 close h = do
   withGC h . const $ return (KillGC, ())
   withUpdateMan h . const $ return (True, ())
