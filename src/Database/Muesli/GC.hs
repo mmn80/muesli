@@ -12,7 +12,7 @@
 -- Stability   : experimental
 -- Portability : portable
 --
--- Garbage Collector for the database.
+-- Garbage collector for the database.
 ----------------------------------------------------------------------------
 
 module Database.Muesli.GC

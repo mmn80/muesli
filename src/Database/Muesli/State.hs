@@ -72,7 +72,8 @@ type MainIndex      = IntMap [LogRecord]
 type SortIndex      = IntMap (IntMap IntSet)
 type FilterIndex    = IntMap (IntMap SortIndex)
 type UniqueIndex    = IntMap (IntMap Int)
-type GapsIndex      = IntMap [DocAddress]
+-- | A map from gap size to a list of addresses where gaps of that size start.
+type GapsIndex      = Map DocSize [DocAddress]
 type PendingIndex   = Map TransactionId [(LogRecord, ByteString)]
 type CompletedIndex = Map TransactionId [LogRecord]
 

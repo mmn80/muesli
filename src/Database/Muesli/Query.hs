@@ -235,7 +235,7 @@ getDocument h r mbs =
     now <- getCurrentTime
     let k = fromIntegral $ recAddress r
     let decodeBs bs =
-          either (throw . DataParseError k (fromIntegral $ recSize r) .
+          either (throw . DataParseError (recAddress r) (recSize r) .
                   showString "Deserialization error: ")
           (\a -> return (DataState hnd $ Cache.insert now k a (B.length bs) cache, a))
           (decode bs)
