@@ -18,14 +18,13 @@
 
 module Database.Muesli.Backend.File
   ( FileHandle
-  , FileLog (..)
+  , FileLogState (..)
   ) where
 
 import           Control.Exception             (throw)
 import           Control.Monad                 (forM_, replicateM, unless, when)
 import           Control.Monad.Trans           (MonadIO (liftIO))
 import           Data.ByteString               (hGet, hPut)
-import           Data.Maybe                    (fromMaybe)
 import           Data.Word                     (Word16, Word8)
 import           Database.Muesli.Backend.Types
 import           Database.Muesli.Types
@@ -70,21 +69,32 @@ instance DataHandle FileHandle where
     hSeek h AbsoluteSeek . fromIntegral $ recAddress r
     hPut h bs
 
-data FileLog = FileLog
-  { flogHandle :: FileHandle
+-- | Implements a stateful binary log file backend.
+--
+-- It uses a 'FileHandle' for both the log and data files.
+data FileLogState = FileLogState
+  {
+-- | The 'Handle' for the log file
+    flogHandle :: FileHandle
+-- | Current valid position in the (quasi)append-only log file.
+-- Located at address 0 of the log file, it is the last write performd as
+-- part of a batch 'logAppend' operation, which makes it atomic.
   , flogPos    :: DocAddress
+-- | Current size of the log file. 'logAppend' first checks the file size
+-- and increases it with minimum 4KB if necessary, then writes the records,
+-- and then updates the 'flogPos'.
   , flogSize   :: DocSize
   } deriving (Show)
 
-instance LogState FileLog where
-  type LogHandleOf FileLog = FileHandle
-  type DataHandleOf FileLog = FileHandle
+instance LogState FileLogState where
+  type LogHandleOf FileLogState = FileHandle
+  type DataHandleOf FileLogState = FileHandle
 
   logHandle = flogHandle
 
   logInit hnd = do
     (pos, sz) <- readLogPos (unIOHandle hnd)
-    return $ FileLog hnd pos sz
+    return $ FileLogState hnd pos sz
 
   logAppend l rs = do
     let hnd = unIOHandle $ logHandle l

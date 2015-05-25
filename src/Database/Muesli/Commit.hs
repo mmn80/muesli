@@ -13,7 +13,7 @@
 -- Stability   : experimental
 -- Portability : portable
 --
--- Transaction commit procedure.
+-- 'Transaction' evaluation inside 'MonadIO'.
 ----------------------------------------------------------------------------
 
 module Database.Muesli.Commit
@@ -44,6 +44,13 @@ import           Database.Muesli.State
 import           Database.Muesli.Types
 import           Prelude                   hiding (filter, lookup)
 
+-- | Abstract monad for writing and evaluating queries under ACID semantics.
+--
+-- The @l@ parameter stands for a 'LogState' backend, @m@ is a 'MonadIO' that gets
+-- lifted, so users can run arbitrary IO inside queries, and @a@ is the result.
+--
+-- A number of primitive queries are provided in the "Database.Muesli.Query"
+-- module.
 newtype Transaction l m a = Transaction
   { unTransaction :: StateT (TransactionState l) m a }
   deriving (Functor, Applicative, Monad)
@@ -51,20 +58,62 @@ newtype Transaction l m a = Transaction
 instance MonadIO m => MonadIO (Transaction l m) where
   liftIO = Transaction . liftIO
 
+-- | State held inside a 'Transaction'.
 data TransactionState l = TransactionState
   { transHandle     :: !(Handle l)
+-- | Allocated by 'runQuery' with 'mkNewTransactionId' (auto-incremental)
   , transId         :: !TransactionId
+-- | Accumulates all documents' keys that have been read as part of the
+-- transaction. It is considered that all updates in the transaction may depend
+-- of these, so the transaction is aborted if concurrent transactions update
+-- any of them.
   , transReadList   :: ![DocumentKey]
+-- | Accumulates all updated or deleted documents' keys.
   , transUpdateList :: ![(LogRecord, ByteString)]
   }
 
-data TransactionAbort = AbortUnique String
-                      | AbortConflict String
-                      | AbortDelete String
+-- | Error returned by 'runQuery' for aborted transactions.
+--
+-- It is an instance of 'Exception' solely for user convenience,
+-- as the database never throws it.
+data TransactionAbort
+  -- | Returned when trying to update an 'Unique' field with a preexisting value.
+  = AbortUnique String
+  -- | Returned when there is a conflict with concurrent transactions.
+  -- This happenes when the 'transUpdateList' of transactions in 'logPend' or
+  -- 'logComp' with 'transId' > then our own 'transId' has any keys that we also
+  -- have in either 'transReadList', or 'transUpdateList'.
+  --
+  -- The second part could be relaxed in the future based on a user policy,
+  -- since overwriting updates are sometimes acceptable.
+  | AbortConflict String
+  -- | Returned when  trying to delete a document that is still referenced by
+  -- other documents.
+  --
+  -- TODO: Current implementation is not completely safe in this regard, as updates
+  -- should also be checked. The reason is that the check is performed on indexes
+  -- and on the pending log. So there is a small window in which it is possible
+  -- for a concurrent transaction to update a record deleted by the current one,
+  -- before adding it to the pending log, without any error.
+  | AbortDelete String
   deriving (Show)
 
 instance Exception TransactionAbort
 
+-- | 'Transaction' evaluation inside a 'MonadIO'.
+--
+-- Lookups are executed directly, targeting a specific version ('TransactionId')
+-- , while the keys of both read and written documents are collected in the
+-- 'TransactionState'.
+--
+-- At the end various consistency checks are performed, and the transaction is
+-- aborted in case any fails. See 'TransactionAbort' for details.
+--
+-- Otherwise, under master lock, space in the data (abstract) file is allocated
+-- with 'GapsIndex.alloc', and the transaction records are written in the
+-- 'logPend', and also in the log file, with 'logAppend'.
+--
+-- The rest of the job is then left for the 'updateManThread'.
 runQuery :: (MonadIO m, LogState l) => Handle l -> Transaction l m a ->
              m (Either TransactionAbort a)
 runQuery h (Transaction t) = do
@@ -133,11 +182,19 @@ runQuery h (Transaction t) = do
         where (a, gs') = GapsIndex.alloc gs $ recSize r
               r' = r { recAddress = a }
 
+-- | Code for the update manager thread forked by 'Database.Muesli.Handle.open'.
+--
+-- It periodically checks for new records in the 'logPend', and processes them,
+-- by adding a 'Completed' record to the log file with 'logAppend', and
+-- updating indexes with 'updateMainIdx', 'updateRefIdx', 'updateSortIdx' and
+-- 'updateUnqIdx', after writing (without master lock) the serialized documents
+-- in the data file with 'writeDocument'.
+-- It also moves the records from 'logPend' to 'logComp'.
 updateManThread :: LogState l => Handle l -> Bool -> IO ()
 updateManThread h w = do
   (kill, wait) <- withUpdateMan h $ \kill -> do
     wait <- if kill then return True else do
-      when w . threadDelay $ 100 * 1000
+      when w . threadDelay $ 100 * 1000 -- TODO: let users control delay
       withMasterLock h $ \m ->
         let lgp = logPend m in
         if null lgp then return Nothing

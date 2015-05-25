@@ -8,28 +8,31 @@
 -- Stability   : experimental
 -- Portability : portable
 --
--- Database indexes update functions.
+-- Incremental database index update functions.
+--
+-- Used during loading, query evaluation, and GC.
 ----------------------------------------------------------------------------
 
 module Database.Muesli.Indexes
   ( updateMainIdx
-  , updateUnqIdx
-  , updateSortIdx
   , updateRefIdx
+  , updateSortIdx
+  , updateUnqIdx
   ) where
 
-import           Data.IntMap.Strict    (IntMap)
 import qualified Data.IntMap.Strict    as Map
 import qualified Data.IntSet           as Set
 import           Data.List             (foldl')
 import           Database.Muesli.State
 
+-- | Updates the 'MainIndex' (allocation table).
 updateMainIdx :: MainIndex -> [LogRecord] -> MainIndex
 updateMainIdx = foldl' f
   where f idx r = let did = fromIntegral (recDocumentKey r) in
                   let rs' = maybe [r] (r:) (Map.lookup did idx) in
                   Map.insert did rs' idx
 
+-- | Updates the 'UniqueIndex'.
 updateUnqIdx :: UniqueIndex -> [LogRecord] -> UniqueIndex
 updateUnqIdx = foldl' f
   where f idx r = foldl' g idx (recUniques r)
@@ -46,6 +49,7 @@ updateUnqIdx = foldl' f
                   where is' = if del then Map.delete rval is
                               else Map.insert rval did is
 
+-- | Updates the main 'SortIndex', and also the 'SortIndex'es inside a 'FilterIndex'.
 updateSortIdx :: SortIndex -> [LogRecord] -> SortIndex
 updateSortIdx = foldl' f
   where f idx r = foldl' g idx (recSortables r)
@@ -68,6 +72,9 @@ updateSortIdx = foldl' f
                                   where ss' = if del then Set.delete did ss
                                               else Set.insert did ss
 
+-- | Updates the 'FilterIndex'.
+--
+-- Calls 'updateSortIdx' for the internal sorted indexes.
 updateRefIdx :: FilterIndex -> [LogRecord] -> FilterIndex
 updateRefIdx = foldl' f
   where f idx r = foldl' g idx (recReferences r)

@@ -17,6 +17,8 @@
 -- Since we use 'IntMap's for our indexes, a (faster) auto-incremented key
 -- will be exhausted on 32 bit machines before we reach a 'maxBound' number
 -- of documents, because deleted keys cannot be reused.
+--
+-- This module should be imported qualified.
 ----------------------------------------------------------------------------
 
 module Database.Muesli.IdSupply

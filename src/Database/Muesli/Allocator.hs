@@ -9,6 +9,8 @@
 -- Portability : portable
 --
 -- Document data allocator.
+--
+-- This module should be imported qualified.
 ----------------------------------------------------------------------------
 
 module Database.Muesli.Allocator
@@ -22,7 +24,6 @@ module Database.Muesli.Allocator
 import           Control.Exception             (throw)
 import qualified Data.IntMap.Strict            as IntMap
 import           Data.List                     (foldl', sortOn)
-import           Data.Map.Strict               (Map)
 import qualified Data.Map.Strict               as Map
 import           Data.Maybe                    (fromMaybe)
 import           Database.Muesli.Backend.Types (LogRecord (..))
@@ -62,7 +63,7 @@ buildExtra pos = foldl' f (empty pos)
   where f gs r = add (recSize r) (recAddress r) gs
 
 -- | Allocates a new slot of the given size.
--- The smallest available size in the index is preffered.
+-- The smallest available size in the index is preferred.
 --
 -- Throws 'DataAllocationError' if no gap big enough is found.
 alloc :: GapsIndex -> DocSize -> (DocAddress, GapsIndex)

@@ -33,6 +33,7 @@ source-repository head
   location: https://github.com/clnx/muesli.git
 
 library
+  ghc-options:       -O2 -Wall
   exposed-modules:
     Database.Muesli.Types,
     Database.Muesli.Backend.Types,

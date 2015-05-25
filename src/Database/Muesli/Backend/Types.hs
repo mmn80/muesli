@@ -35,10 +35,9 @@ module Database.Muesli.Backend.Types
 
 import           Control.Monad.Trans   (MonadIO)
 import           Data.ByteString       (ByteString)
-import           Data.Word             (Word64)
 import           Database.Muesli.Types (DocAddress, DocSize, DocumentKey,
-                                        IxKey (..), PropertyKey, SortableKey,
-                                        TransactionId, UniqueKey)
+                                        PropertyKey, SortableKey, TransactionId,
+                                        UniqueKey)
 
 -- | Holds the metadata for a given document version.
 --

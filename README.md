@@ -105,7 +105,7 @@ Then you can run these transactions with `runQuery` inside some `MonadIO` contex
 Note that `Transaction` itself is an instance of `MonadIO`, so you can do
 arbitrary IO inside.
 The `l` parameter specifies which storage backend you use.
-Currently only a binary file backend is implemented, used with `Handle FileLog`.
+Currently only a binary file backend is implemented, used with `Handle FileLogState`.
 
 ```Haskell
 import Database.Muesli.Query
@@ -121,7 +121,7 @@ flagIt h name email = runQuery h $ do
 main :: IO ()
 main = bracket
   (putStrLn "opening DB..." >> open (Just "blog.log") (Just "blog.dat"))
-  (\(h :: Handle FileLog) -> putStrLn "closing DB..." >> close h)
+  (\(h :: Handle FileLogState) -> putStrLn "closing DB..." >> close h)
   (\h -> flagIt h "Bender Bending Rodríguez" "bender@ilovebender.com")
 
 ```

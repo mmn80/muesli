@@ -12,7 +12,31 @@
 -- Stability   : experimental
 -- Portability : portable
 --
--- Garbage collector for the database.
+-- Asynchronous garbage collector for the database.
+--
+-- The GC creates fresh copies of both the log and the data (abstract) files,
+-- fully /cleaned/, respectively /compacted/, and finally takes a master lock,
+-- appends the transaction data that was added in the mean time, and uses the
+-- 'swapDb' function to make the new files current. No expensive lock needs
+-- to be taken in the beginning, since all indexes are purely functional and
+-- we just take some pointers.
+--
+-- /Cleaning/ means removal of all versions of deleted records, and all but the
+-- most recent version for the rest.
+--
+-- /Compacting/ means all records are reallocated contiguously starting from
+-- 'DocAddress' 0. In particular, it creates a fresh empty 'gaps' index with the
+-- help of 'Gaps.buildExtra'.
+--
+-- The complete operation takes __O(n*log(n))__ time, but the lock is held only
+-- for __O(k*log(n))__ at the end, where k represents the number of new records,
+-- which is similar to a normal query.
+-- For this reason it is safe to run the GC at any time.
+--
+-- The database does not call 'Database.Muesli.Handle.performGC' by itself,
+-- but leaves this to the user. Programs that only rarely
+-- 'Database.Muesli.Query.delete' or 'Database.Muesli.Query.update' records
+-- don't even need to run the GC, or they can make it an admin action.
 ----------------------------------------------------------------------------
 
 module Database.Muesli.GC
@@ -32,8 +56,11 @@ import qualified Database.Muesli.IdSupply  as Ids
 import           Database.Muesli.Indexes
 import           Database.Muesli.State
 import           Database.Muesli.Types
-import           Foreign                   (sizeOf)
 
+-- | Code for the GC thread forked by 'Database.Muesli.Handle.open'.
+--
+-- It listens for messages sent by 'Database.Muesli.Handle.performGC' through
+-- 'gcState', and performs the GC operation.
 gcThread :: forall l. LogState l => Handle l -> IO ()
 gcThread h = do
   sgn <- withGC h $ \sgn -> do
@@ -46,12 +73,12 @@ gcThread h = do
       let ts  = concatMap toTransRecord $ groupBy ((==) `on` recTransactionId) rs'
       let ids = foldl' (\s r -> Ids.reserve (recDocumentKey r) s) Ids.empty .
                 map fromPending $ filter isPending ts
-      let logPath = logFilePath (unHandle h)
+      let logPath = logDbPath (unHandle h)
       let logPathNew = logPath ++ ".new"
       withDb logPathNew $ \hnd -> do
         st <- logInit hnd
         logAppend (st :: l) ts
-      let dataPath = dataFilePath (unHandle h)
+      let dataPath = dataDbPath (unHandle h)
       let dataPathNew = dataPath ++ ".new"
       buildDataFile dataPathNew rs2 h
       let mIdx = updateMainIdx IntMap.empty rs'
@@ -85,7 +112,7 @@ gcThread h = do
                               , refIdx    = updateRefIdx  rIdx ncrs
                               }
           return (m, ())
-        withData h $ \(DataState hnd cache) -> do
+        withData h $ \(DataState _ cache) -> do
           hnd' <- swapDb dataPath dataPathNew
           return (DataState hnd' cache, ())
         return (kill, ())

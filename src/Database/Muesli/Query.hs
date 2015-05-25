@@ -15,23 +15,32 @@
 -- Portability : portable
 --
 -- The 'Transaction' monad and its primitive queries.
+--
+-- All queries in this module are run on internal indexes and perform a
+-- __O(log(n))__ worst case operation.
 ----------------------------------------------------------------------------
 
 module Database.Muesli.Query
   ( module Database.Muesli.Types
   , module Database.Muesli.Backend.Types
+-- * The Transaction monad
   , Transaction
   , TransactionAbort (..)
   , runQuery
+-- * Primitive queries
+-- ** CRUD operations
   , lookup
   , insert
   , update
   , delete
+-- ** Range queries
   , range
   , rangeK
   , filter
+-- ** Queries on unique fields
   , lookupUnique
   , updateUnique
+-- ** Other
   , size
   ) where
 
@@ -39,7 +48,7 @@ import           Control.Applicative           ((<|>))
 import           Control.Exception             (throw)
 import           Control.Monad                 (forM, liftM)
 import qualified Control.Monad.State           as S
-import           Control.Monad.Trans           (MonadIO (liftIO))
+import           Control.Monad.Trans           (MonadIO)
 import           Data.ByteString               (ByteString)
 import qualified Data.ByteString               as B
 import           Data.IntMap.Strict            (IntMap)
@@ -60,6 +69,7 @@ import           Database.Muesli.State
 import           Database.Muesli.Types
 import           Prelude                       hiding (filter, lookup)
 
+-- | Dereferences the given key. Returns 'Nothing' if the key is not found.
 lookup :: (Document a, LogState l, MonadIO m) => Reference a ->
            Transaction l m (Maybe (Reference a, a))
 lookup (Reference did) = Transaction $ do
@@ -83,6 +93,8 @@ findFirstDoc m t did = do
                      L.find ((<= transId t) . recTransactionId))
   if recDeleted r then Nothing else Just (r, mbs)
 
+-- | Returns a 'Reference' to a document uniquely determined by the given
+-- 'Unique' key value, or 'Nothing' if the key is not found.
 lookupUnique :: (ToKey (Unique b), MonadIO m) =>
                  Property a -> Unique b -> Transaction l m (Maybe (Reference a))
 lookupUnique p ub = Transaction $ do
@@ -95,6 +107,8 @@ lookupUnique p ub = Transaction $ do
                             IntMap.lookup (fromIntegral u))
   where pp = fst $ unProperty p
 
+-- | Performs a 'lookupUnique' and then, depending whether the key exists or not,
+-- either 'insert's or 'update's the respective document.
 updateUnique :: (Document a, ToKey (Unique b), MonadIO m) =>
                  Property a -> Unique b -> a -> Transaction l m (Reference a)
 updateUnique p u a = do
@@ -103,7 +117,12 @@ updateUnique p u a = do
     Nothing  -> insert a
     Just did -> update did a >> return did
 
-update :: forall a l d m. (Document a, MonadIO m) =>
+-- | Updates a document.
+--
+-- Note that since @muesli@ is a MVCC database, this means inserting a new
+-- version of the document. The version number is the 'TransactionId' of the
+-- current transaction. This fact is transparent to the user though.
+update :: forall a l m. (Document a, MonadIO m) =>
           Reference a -> a -> Transaction l m ()
 update did a = Transaction $ do
   t <- S.get
@@ -123,6 +142,9 @@ update did a = Transaction $ do
     p2k (p, val) = (getP p, val)
     getP p = fst $ unProperty (fromString p :: Property a)
 
+-- | Inserts a new document and returns its key.
+--
+-- The primary key is generated with 'mkNewDocumentKey'.
 insert :: (Document a, MonadIO m) => a -> Transaction l m (Reference a)
 insert a = Transaction $ do
   t <- S.get
@@ -130,6 +152,15 @@ insert a = Transaction $ do
   unTransaction $ update (Reference did) a
   return $ Reference did
 
+-- | Deletes a document.
+--
+-- Note that since @muesli@ is a MVCC database, this means inserting a new
+-- version with the 'recDeleted' flag set to 'True'.
+-- But this fact is transparent to the user, since the indexes are updated
+-- as if the record was really deleted.
+--
+-- It will be the job of the 'Database.Muesli.GC.gcThread' to actually
+-- clean the transaction log and compact the data file.
 delete :: MonadIO m => Reference a -> Transaction l m ()
 delete (Reference did) = Transaction $ do
   t <- S.get
@@ -160,17 +191,57 @@ page_ f mdid = Transaction $ do
   S.put t { transReadList = (unReference . fst <$> dds') ++ transReadList t }
   return dds'
 
-range :: (Document a, ToKey (Sortable b), LogState l, MonadIO m) =>
-          Maybe (Sortable b) -> Maybe (Reference a) -> Property a -> Int ->
-          Transaction l m [(Reference a, a)]
+-- | Runs a range query on a 'Sortable' field.
+--
+-- It can be used as a cursor, for precise and efficient paging through a
+-- large dataset. For this purpose you should remember the last 'Reference'
+-- from the previous page and give it as the /sortKey/ argument below.
+-- This is needed since the sortable field may not have unique values, so
+-- remembering just the /sortVal/ is insufficint.
+--
+-- The corresponding SQL is:
+--
+-- @
+-- SELECT TOP page * FROM table
+-- WHERE (sortVal = NULL OR sortFld < sortVal) AND (sortKey = NULL OR ID < sortKey)
+-- ORDER BY field, ID DESC
+-- @
+range :: (Document a, ToKey (Sortable b), LogState l, MonadIO m)
+      => Maybe (Sortable b)  -- ^ The @sortVal@ in the below SQL.
+      -> Maybe (Reference a) -- ^ The @sortKey@ below.
+      -> Property a          -- ^ The @sortFld@ and @table@ below.
+      -> Int                 -- ^ The @page@ below.
+      -> Transaction l m [(Reference a, a)]
 range mst msti p pg = page_ f mst
   where f st m = fromMaybe [] $ do
                    ds <- IntMap.lookup (prop2Int p) (sortIdx m)
                    return $ getPage st (rval msti) pg ds
 
-filter :: (Document a, ToKey (Sortable b), LogState l, MonadIO m) =>
-           Maybe (Reference c) -> Maybe (Sortable b) -> Maybe (Reference a) ->
-           Property a -> Property a -> Int -> Transaction l m [(Reference a, a)]
+-- | Runs a filter-and-range query on a 'Reference' field, with results sorted
+-- on a different 'Sortable' field.
+--
+-- Sending 'Nothing' for @filterVal@ filters for @NULL@ values, which correspond
+-- to a 'Nothing' in a field of type 'Maybe' ('Reference' a). This uses the
+-- special 'Maybe' instance mentioned at the 'Indexable' documentation.
+--
+-- The paging behaviour is the same as for 'range'.
+--
+-- The corresponding SQL is:
+--
+-- @
+-- SELECT TOP page * FROM table
+-- WHERE (filterFld = filterVal) AND
+--       (sortVal = NULL OR sortFld < sortVal) AND (sortKey = NULL OR ID < sortKey)
+-- ORDER BY field, ID DESC
+-- @
+filter :: (Document a, ToKey (Sortable b), LogState l, MonadIO m)
+       => Maybe (Reference c)  -- ^ The @filterVal@ in the below SQL.
+       -> Maybe (Sortable b)   -- ^ The @sortVal@ below.
+       -> Maybe (Reference a)  -- ^ The @sortKey@ below.
+       -> Property a           -- ^ The @sortFld@ and @table@ below.
+       -> Property a           -- ^ The @filterFld@ and @table@ below.
+       -> Int                  -- ^ The @page@ below.
+       -> Transaction l m [(Reference a, a)]
 filter mdid mst msti fprop sprop pg = page_ f mst
   where f _ m = fromMaybe [] . liftM (getPage (ival mst) (rval msti) pg) $
                   IntMap.lookup (fromIntegral . fst . unProperty $ fprop) (refIdx m) >>=
@@ -187,8 +258,14 @@ pageK_ f mdid = Transaction $ do
   S.put t { transReadList = dds ++ transReadList t }
   return (Reference <$> dds)
 
-rangeK :: (Document a, ToKey (Sortable b), MonadIO m) => Maybe (Sortable b) ->
-           Maybe (Reference a) -> Property a -> Int -> Transaction l m [Reference a]
+-- | Like 'range', but only returns the keys and does not touch the data file.
+-- This may be used for implementing a faster deleteRange query, for example.
+rangeK :: (Document a, ToKey (Sortable b), MonadIO m)
+       => Maybe (Sortable b)
+       -> Maybe (Reference a)
+       -> Property a
+       -> Int
+       -> Transaction l m [Reference a]
 rangeK mst msti p pg = pageK_ f mst
   where f st m = fromMaybe [] $ getPage st (rval msti) pg <$>
                                 IntMap.lookup (prop2Int p) (sortIdx m)
@@ -212,6 +289,7 @@ getPage2 sta pg idx = go sta pg []
                  Nothing -> (p, acc)
                  Just a  -> go a (p - 1) (a:acc)
 
+-- | Returns the number of documents of type @a@ in the database.
 size :: (Document a, MonadIO m) => Property a -> Transaction l m Int
 size p = Transaction $ do
   t <- S.get

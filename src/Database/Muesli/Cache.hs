@@ -13,7 +13,10 @@
 -- Stability   : experimental
 -- Portability : portable
 --
--- LRU cache implementation.
+-- LRU cache implementation using the
+-- <http://hackage.haskell.org/package/psqueues psqueues> package.
+--
+-- This module should be imported qualified.
 ----------------------------------------------------------------------------
 
 module Database.Muesli.Cache
@@ -33,58 +36,86 @@ import           Data.Time.Clock (NominalDiffTime, UTCTime, diffUTCTime)
 import           Data.Typeable   (Typeable)
 import           Prelude         hiding (lookup)
 
+-- | Holds a 'Dynamic' and the size of the corresponding serialized data.
 data DynValue = DynValue
   { dynValue :: !Dynamic
   , dynSize  :: !Int
   } deriving (Show)
 
+-- | A LRU cache that uses a lower capacity in periods of inactivity.
+-- This behaviour would be useful for things like long lived Android services.
 data LRUCache = LRUCache
-  { cMinCap :: !Int
-  , cMaxCap :: !Int
-  , cMaxAge :: !NominalDiffTime
-  , cSize   :: !Int
-  , cQueue  :: !(IntPSQ UTCTime DynValue)
+  { minCapacity :: !Int -- ^ Minimum capacity under which 'maxAge' is ignored
+  , maxCapacity :: !Int -- ^ Maximum capacity above which oldest items are removed
+  , maxAge :: !NominalDiffTime
+  , size   :: !Int      -- ^ Current size of the cache
+  , queue  :: !(IntPSQ UTCTime DynValue)
   }
 
-empty :: Int -> Int -> NominalDiffTime -> LRUCache
-empty minc maxc age = LRUCache { cMinCap = minc
-                               , cMaxCap = maxc
-                               , cMaxAge = age
-                               , cSize   = 0
-                               , cQueue  = PQ.empty
+-- | Creates an empty cache.
+empty :: Int             -- ^ Minimum capacity
+      -> Int             -- ^ Maximum capacity
+      -> NominalDiffTime -- ^ Maximum age
+      -> LRUCache
+empty minc maxc age = LRUCache { minCapacity = minc
+                               , maxCapacity = maxc
+                               , maxAge = age
+                               , size   = 0
+                               , queue  = PQ.empty
                                }
 
-trim :: UTCTime -> LRUCache -> LRUCache
+-- | Apply cache's policy and removes items if necessary.
+trim :: UTCTime  -- ^ Current time
+     -> LRUCache
+     -> LRUCache
 trim now c =
-  if cSize c < cMinCap c then c
-  else case PQ.findMin (cQueue c) of
+  if size c < minCapacity c then c
+  else case PQ.findMin (queue c) of
     Nothing        -> c
-    Just (_, p, v) -> if (cSize c < cMaxCap c) && (diffUTCTime now p < cMaxAge c)
-                      then c
-                      else trim now $! c { cSize  = cSize c - dynSize v
-                                         , cQueue = PQ.deleteMin (cQueue c)
-                                         }
+    Just (_, p, v) ->
+      if (size c < maxCapacity c) && (diffUTCTime now p < maxAge c)
+      then c
+      else trim now $! c { size  = size c - dynSize v
+                         , queue = PQ.deleteMin (queue c)
+                         }
 
-insert :: Typeable a => UTCTime -> Int -> a -> Int -> LRUCache -> LRUCache
-insert now k a sz c = trim now $! c { cSize  = cSize c + sz - maybe 0 (dynSize . snd) mbv
-                                    , cQueue = q
+-- | Adds a new item to the cache, and 'trim's.
+insert :: Typeable a
+       => UTCTime -- ^ Current time
+       -> Int     -- ^ Key
+       -> a       -- ^ Value
+       -> Int     -- ^ Size
+       -> LRUCache
+       -> LRUCache
+insert now k a sz c = trim now $! c { size  = size c + sz -
+                                                   maybe 0 (dynSize . snd) mbv
+                                    , queue = q
                                     }
-  where (mbv, q) = PQ.insertView k now v (cQueue c)
+  where (mbv, q) = PQ.insertView k now v (queue c)
         v = DynValue { dynValue = toDyn a
                      , dynSize  = sz
                      }
 
-lookup :: Typeable a => UTCTime -> Int -> LRUCache -> Maybe (a, Int, LRUCache)
+-- | Looks up an item into the cache.
+-- If found, it updates the access time for the item, and then 'trim's.
+lookup :: Typeable a
+       => UTCTime -- ^ Current time
+       -> Int     -- ^ Key
+       -> LRUCache
+       -> Maybe (a, Int, LRUCache)
 lookup now k c =
-  case PQ.alter f k (cQueue c) of
+  case PQ.alter f k (queue c) of
     (Nothing, _) -> Nothing
     (Just v,  q) -> (, dynSize v, c') <$> fromDynamic (dynValue v)
-      where !c' = trim now $ c { cQueue = q }
+      where !c' = trim now $ c { queue = q }
   where f = maybe (Nothing, Nothing) (\(_, v) -> (Just v,  Just (now, v)))
 
-delete :: Int -> LRUCache -> LRUCache
+-- | Deletes an item from the cache.
+delete :: Int      -- ^ Key
+       -> LRUCache
+       -> LRUCache
 delete k c = maybe c
-  (\(_, v) -> c { cSize  = cSize c - dynSize v
-                , cQueue = PQ.delete k (cQueue c)
+  (\(_, v) -> c { size  = size c - dynSize v
+                , queue = PQ.delete k (queue c)
                 }) $
-  PQ.lookup k (cQueue c)
+  PQ.lookup k (queue c)

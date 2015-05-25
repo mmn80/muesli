@@ -68,11 +68,9 @@ module Database.Muesli.Types
   ) where
 
 import           Control.Exception     (Exception)
-import           Control.Monad.Trans   (MonadIO)
 import           Data.Bits             (Bits, FiniteBits)
 import           Data.Hashable         (Hashable, hash)
 import           Data.List             (foldl')
-import           Data.Maybe            (fromJust)
 import           Data.Serialize        (Serialize (..))
 import           Data.String           (IsString (..))
 import           Data.Time.Clock       (UTCTime)
@@ -215,7 +213,7 @@ instance {-# OVERLAPPABLE #-} Show a => ToKey (Sortable a) where
 -- The 'Hashable' instance is used to generate the key.
 --
 -- For fields that need to be both unique and sortable, use
--- @'Unique' ('Sortable' a)@ rather then the other way around.
+-- 'Unique' ('Sortable' a) rather then the other way around.
 newtype Unique a = Unique { unUnique :: a }
   deriving (Eq, Serialize)
 
@@ -237,7 +235,6 @@ instance {-# OVERLAPPABLE #-} Hashable a => ToKey (Unique a) where
 -- Users are not expected to need writing instances for this class.
 -- They can rather be generated automatically with the @DeriveAnyClass@
 -- extension.
-
 class Indexable a where
   getIxValues :: a -> [IxKey]
   getIxValues _ = []
@@ -307,10 +304,10 @@ instance (GetIndexables a, GetIndexables b) => GetIndexables (a :+: b) where
   ggetIndexables _ (R1 x) = ggetIndexables "" x
 
 instance GetIndexables a => GetIndexables (M1 D c a) where
-  ggetIndexables _ m1@(M1 x) = ggetIndexables "" x
+  ggetIndexables _ (M1 x) = ggetIndexables "" x
 
 instance GetIndexables a => GetIndexables (M1 C c a) where
-  ggetIndexables _ m1@(M1 x) = ggetIndexables "" x
+  ggetIndexables _ (M1 x) = ggetIndexables "" x
 
 instance (GetIndexables a, Selector c) => GetIndexables (M1 S c a) where
   ggetIndexables _ m1@(M1 x) = ggetIndexables (selName m1) x

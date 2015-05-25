@@ -9,16 +9,19 @@
 -- Portability : portable
 --
 -- Resource management types and functions.
+--
+-- This module reexports "Database.Muesli.Types", "Database.Muesli.Backend.Types"
+-- and the file backend "Database.Muesli.Backend.File".
 ----------------------------------------------------------------------------
 
 module Database.Muesli.Handle
   ( module Database.Muesli.Types
   , module Database.Muesli.Backend.Types
+  , module Database.Muesli.Backend.File
   , Handle
   , open
   , close
   , performGC
-  , DatabaseError (..)
   , debug
   ) where
 
@@ -29,8 +32,9 @@ import qualified Data.ByteString               as B
 import qualified Data.IntMap.Strict            as IntMap
 import qualified Data.Map.Strict               as Map
 import           Data.Maybe                    (fromMaybe)
-import           Data.Time                     (UTCTime)
+import           Data.Time                     ()
 import qualified Database.Muesli.Allocator     as GapsIndex
+import           Database.Muesli.Backend.File
 import           Database.Muesli.Backend.Types
 import qualified Database.Muesli.Cache         as Cache
 import           Database.Muesli.Commit
@@ -39,10 +43,21 @@ import qualified Database.Muesli.IdSupply      as Ids
 import           Database.Muesli.Indexes
 import           Database.Muesli.State
 import           Database.Muesli.Types
-import           Foreign                       (sizeOf)
 import           System.FilePath               ((</>))
 
-open :: (MonadIO m, LogState l) => Maybe DbPath -> Maybe DbPath -> m (Handle l)
+-- | Opens a database, reads the transaction log and builds the in-memory indexes.
+--
+-- The resulting 'Handle' 's @l@ parameter should be instantiated by the user
+-- in order to specify a backend. For example, to use the file backend:
+--
+-- @
+-- openDataBase :: FilePath -> FilePath -> IO (Handle FileLogState)
+-- openDataBase logPath dataPath = open (Just logPath) (Just dataPath)
+-- @
+open :: (MonadIO m, LogState l)
+     => Maybe DbPath -- ^ Log path. Default is @data/docdb.log@.
+     -> Maybe DbPath -- ^ Data path. Default is @data/docdb.dat@.
+     -> m (Handle l)
 open lf df = do
   let logPath = fromMaybe ("data" </> "docdb.log") lf
   let datPath = fromMaybe ("data" </> "docdb.dat") df
@@ -65,12 +80,12 @@ open lf df = do
   mv <- liftIO $ newMVar m''
   let d = DataState { dataHandle = dh
                     , dataCache  = Cache.empty 0x100000 (0x100000 * 10) 60
-                    }
+                    } -- TODO: let user control cache params
   dv <- liftIO $ newMVar d
   um <- liftIO $ newMVar False
   gc <- liftIO $ newMVar IdleGC
-  let h = Handle DBState { logFilePath  = logPath
-                         , dataFilePath = datPath
+  let h = Handle DBState { logDbPath  = logPath
+                         , dataDbPath = datPath
                          , masterState  = mv
                          , dataState    = dv
                          , updateMan    = um
@@ -109,10 +124,16 @@ readLog m = do
                         , refIdx   = updateRefIdx (refIdx m) rs
                         }
 
+-- | Sends a message to the 'Database.Muesli.GC.gcThread' requesting GC.
 performGC :: MonadIO m => Handle l -> m ()
 performGC h = withGC h . const $ return (PerformGC, ())
 
-debug :: (MonadIO m, LogState l) => Handle l -> Bool -> Bool -> m String
+-- | A debug function that traces the internal 'DBState'.
+debug :: (MonadIO m, LogState l)
+      => Handle l
+      -> Bool -- ^ Dump indexes.
+      -> Bool -- ^ Dump the cache.
+      -> m String
 debug h sIdx sCache = do
   mstr <- withMasterLock h $ \m -> return $
     showsH   "logState  : "    (logState m) .
@@ -128,13 +149,17 @@ debug h sIdx sCache = do
     showsH "\ngaps      :\n  " (gaps m)
     else showString ""
   dstr <- withDataLock h $ \d -> return $
-    showsH "\ncacheSize : " (Cache.cSize $ dataCache d) .
+    showsH "\ncacheSize : " (Cache.size $ dataCache d) .
     if sCache then
-    showsH "\ncache     :\n  " (Cache.cQueue $ dataCache d)
+    showsH "\ncache     :\n  " (Cache.queue $ dataCache d)
     else showString ""
   return $ mstr . dstr $ ""
   where showsH s a = showString s . shows a
 
+-- | Closes the database.
+--
+-- Since the database is ACID, calling 'close' is not really necessary for
+-- consistency purposes.
 close :: (MonadIO m, LogState l) => Handle l -> m ()
 close h = do
   withGC h . const $ return (KillGC, ())
