@@ -20,9 +20,14 @@ Features
 [`GHC.Generics`][gen] and [`deriving`][der].
 * **simple monad for writing queries**, with standard primitive operations like:
 `lookup`, `insert`, `update`, `delete`, `range`, `filter`.
-* most general type of read query supported by the primitive ops (`filter`):
+* range queries (`filter` and `range`) afford efficient cursor-like navigation
+(paging) through large datasets:
 ```SQL
-SELECT TOP p * FROM t WHERE c = k AND o < s ORDER BY o DESC
+SELECT TOP page * FROM table
+WHERE (filterFld = filterVal) AND
+      (sortVal = NULL OR sortFld < sortVal) AND
+      (sortKey = NULL OR ID < sortKey)
+ORDER BY field, ID DESC
 ```
 * **easy to reason about performance**: all primitive queries run in **O(log n)**.
 * **type safety**: impossible to attempt deserializing a record at a wrong type
@@ -32,8 +37,6 @@ There are also `Num`/`Integral` instances to support more generic apps,
 but normally those are not needed.
 * easily implementable **multiple backends** supported: currently *file*, and
 soon (:tm:) *in-memory*, *remote*.
-* only `Prelude` functions in the default file backend, **no dependencies on C
-libraries** (mmap, kv stores, etc.)
 * **replication**: soon (:tm:)
 
 *Note: some of these features become misfeatures for certain scenarios which
@@ -110,7 +113,6 @@ Currently only a binary file backend is implemented, used with `Handle FileLogSt
 ```Haskell
 import Database.Muesli.Query
 import Database.Muesli.Handle
-import Database.Muesli.Backend.File
 
 flagIt :: (MonadIO m, LogState l) => Handle l -> String -> String ->
            m (Either TransactionAbort ())
@@ -129,7 +131,7 @@ main = bracket
 TODO
 ----
 - [ ] expose the inverted index
-- [ ] queries that only return keys (no data file IO)
+- [x] queries that only return keys (no data file IO)
 - [ ] blocking version of `runQuery`
 - [ ] testing it on mobile devices
 - [ ] in-memory backend compatible with `mmap`; also, a remote backend

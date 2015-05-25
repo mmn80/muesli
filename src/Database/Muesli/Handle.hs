@@ -166,3 +166,5 @@ close h = do
   withUpdateMan h . const $ return (True, ())
   withMasterLock h $ \m -> closeDb $ logHandle (logState m)
   withDataLock   h $ \(DataState d _) -> closeDb d
+
+{-# ANN module "HLint: ignore Use import/export shortcut" #-}
