@@ -1,4 +1,5 @@
 {-# LANGUAGE DefaultSignatures          #-}
+{-# LANGUAGE DeriveDataTypeable         #-}
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -63,6 +64,7 @@ module Database.Muesli.Types
   , PropertyKey
 -- * Other
   , Property (..)
+  , DateTime (..)
   , DatabaseError (..)
   , TransactionId
   , DocAddress
@@ -70,13 +72,17 @@ module Database.Muesli.Types
   ) where
 
 import           Control.Exception     (Exception)
+import           Control.Monad         (liftM)
 import           Data.Bits             (Bits, FiniteBits)
+import           Data.Data             (Data)
 import           Data.Hashable         (Hashable, hash)
 import           Data.List             (foldl')
 import           Data.Serialize        (Serialize (..))
 import           Data.String           (IsString (..))
 import           Data.Time.Clock       (UTCTime)
-import           Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
+import           Data.Time.Clock.POSIX (posixSecondsToUTCTime,
+                                        utcTimeToPOSIXSeconds)
+import           Data.Time.Format      (FormatTime, ParseTime)
 import           Data.Typeable         (Proxy (..), Typeable, typeRep)
 import           Data.Word             (Word64, Word8)
 import           Foreign               (Storable, sizeOf)
@@ -95,6 +101,18 @@ type TransactionId = Word64
 type DocAddress    = Word64
 -- | Size of a serialized document's data.
 type DocSize       = Word64
+
+-- | A @newtype@ wrapper around 'UTCTime' that has 'Show', 'Serialize' and
+-- 'ToKey' instances.
+newtype DateTime = DateTime { unDateTime :: UTCTime }
+  deriving (Eq, Ord, Data, ParseTime, FormatTime)
+
+instance Show DateTime where
+  showsPrec p = showsPrec p . unDateTime
+
+instance Serialize DateTime where
+  put = put . toRational . utcTimeToPOSIXSeconds . unDateTime
+  get = liftM (DateTime . posixSecondsToUTCTime . fromRational) get
 
 -- | Type for exceptions thrown by the database.
 -- During normal operation these should never be thrown.
@@ -124,7 +142,7 @@ instance Show IxKey where
 -- | Class used to convert indexable field & query argument values to keys.
 --
 -- It is possibly needed for users to write instances for 'IxKey'-convertible
--- primitive types, other then the provided 'Bool', 'Int' and 'UTCTime'.
+-- primitive types, other then the provided 'Bool', 'Int' and 'DateTime'.
 class ToKey a where
   toKey :: a -> IxKey
 
@@ -181,7 +199,7 @@ instance Show (Reference a) where
 -- | Marks a field available for sorting and 'range' queries.
 --
 -- Indexing requires a 'ToKey' instance. Apart from the provided 'Bool', 'Int'
--- and 'UTCTime' instances, there is an overlappable fallback instance based on
+-- and 'DateTime' instances, there is an overlappable fallback instance based on
 -- converting the 'Show' string representation to an 'IxKey' by taking the first
 -- 4 or 8 bytes. This is good enough for primitive string sorting.
 newtype Sortable a = Sortable { unSortable :: a }
@@ -199,8 +217,8 @@ instance ToKey (Sortable Bool) where
 instance ToKey (Sortable Int) where
   toKey (Sortable a) = fromIntegral a
 
-instance ToKey (Sortable UTCTime) where
-  toKey (Sortable t) = round $ utcTimeToPOSIXSeconds t
+instance ToKey (Sortable DateTime) where
+  toKey (Sortable (DateTime t)) = round $ utcTimeToPOSIXSeconds t
 
 instance {-# OVERLAPPABLE #-} Show a => ToKey (Sortable a) where
   toKey (Sortable a) = snd $ foldl' f (ws - 1, 0) bytes
