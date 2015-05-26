@@ -28,10 +28,10 @@ module Database.Muesli.IdSupply
   , alloc
   ) where
 
-import           Control.Exception             (throw)
-import           Data.IntMap.Strict            (IntMap)
-import qualified Data.IntMap.Strict            as Map
-import           Database.Muesli.Types         (DatabaseError (..), DocumentKey)
+import           Control.Exception     (throw)
+import           Data.IntMap.Strict    (IntMap)
+import qualified Data.IntMap.Strict    as Map
+import           Database.Muesli.Types (DatabaseError (..), DocumentKey)
 
 -- | A map from keys to gap sizes.
 type IdSupply = IntMap Int

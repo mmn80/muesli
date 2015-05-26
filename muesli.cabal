@@ -3,7 +3,7 @@ category:            Database
 version:             0.1.0.0
 synopsis:            A simple document-oriented database
 description:
-  `muesli` is an easy to use
+  @muesli@ is an easy to use
   <https://en.wikipedia.org/wiki/Multiversion_concurrency_control MVCC>
   <https://en.wikipedia.org/wiki/Document-oriented_database document-oriented database>
   featuring ACID transactions, automatic index management and minimal boilerplate.
