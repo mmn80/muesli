@@ -85,7 +85,7 @@ gcThread h = do
       let uIdx = updateUnqIdx  IntMap.empty rs'
       let iIdx = updateSortIdx IntMap.empty rs'
       let rIdx = updateRefIdx  IntMap.empty rs'
-      when (forceEval mIdx iIdx rIdx) $ withUpdateMan h $ \kill -> do
+      when (forceEval mIdx iIdx rIdx) $ withCommitSgn h $ \kill -> do
         withMaster h $ \nm -> do
           let (ncrs', dpos') = realloc dpos . concat . Map.elems $
                                logComp nm \\ logCompOld

@@ -21,7 +21,7 @@ module Database.Muesli.Commit
   , TransactionState (..)
   , runQuery
   , TransactionAbort (..)
-  , updateManThread
+  , commitThread
   ) where
 
 import           Control.Concurrent        (threadDelay)
@@ -48,9 +48,6 @@ import           Prelude                   hiding (filter, lookup)
 --
 -- The @l@ parameter stands for a 'LogState' backend, @m@ is a 'MonadIO' that gets
 -- lifted, so users can run arbitrary IO inside queries, and @a@ is the result.
---
--- A number of primitive queries are provided in the "Database.Muesli.Query"
--- module.
 newtype Transaction l m a = Transaction
   { unTransaction :: StateT (TransactionState l) m a }
   deriving (Functor, Applicative, Monad)
@@ -59,6 +56,8 @@ instance MonadIO m => MonadIO (Transaction l m) where
   liftIO = Transaction . liftIO
 
 -- | State held inside a 'Transaction'.
+--
+-- Note: The 'Transaction' type is internally 'StateT' ('TransactionState' l) m a.
 data TransactionState l = TransactionState
   { transHandle     :: !(Handle l)
 -- | Allocated by 'runQuery' with 'mkNewTransactionId' (auto-incremental)
@@ -113,7 +112,10 @@ instance Exception TransactionAbort
 -- with 'GapsIndex.alloc', and the transaction records are written in the
 -- 'logPend', and also in the log file, with 'logAppend'.
 --
--- The rest of the job is then left for the 'updateManThread'.
+-- Writing the serialized data to the data file, updating indexes and completing
+-- the transaction is then left for the 'commitThread'.
+-- Note that transactions are only durable after 'commitThread' finishes.
+-- In the future we may add a blocking version of 'runQuery'.
 runQuery :: (MonadIO m, LogState l) => Handle l -> Transaction l m a ->
              m (Either TransactionAbort a)
 runQuery h (Transaction t) = do
@@ -182,7 +184,7 @@ runQuery h (Transaction t) = do
         where (a, gs') = GapsIndex.alloc gs $ recSize r
               r' = r { recAddress = a }
 
--- | Code for the update manager thread forked by 'Database.Muesli.Handle.open'.
+-- | Code for the commit thread forked by 'Database.Muesli.Handle.open'.
 --
 -- It periodically checks for new records in the 'logPend', and processes them,
 -- by adding a 'Completed' record to the log file with 'logAppend', and
@@ -190,11 +192,11 @@ runQuery h (Transaction t) = do
 -- 'updateUnqIdx', after writing (without master lock) the serialized documents
 -- in the data file with 'writeDocument'.
 -- It also moves the records from 'logPend' to 'logComp'.
-updateManThread :: LogState l => Handle l -> Bool -> IO ()
-updateManThread h w = do
-  (kill, wait) <- withUpdateMan h $ \kill -> do
+commitThread :: LogState l => Handle l -> Bool -> IO ()
+commitThread h w = do
+  (kill, wait) <- withCommitSgn h $ \kill -> do
     wait <- if kill then return True else do
-      when w . threadDelay $ 100 * 1000 -- TODO: let users control delay
+      when w . threadDelay . commitDelay $ unHandle h
       withMasterLock h $ \m ->
         let lgp = logPend m in
         if null lgp then return Nothing
@@ -221,7 +223,7 @@ updateManThread h w = do
                      }
           return (m', null lgp))
     return (kill, (kill, wait))
-  unless kill $ updateManThread h wait
+  unless kill $ commitThread h wait
   where updateLog tid keep lgp lgc = (lgp', lgc')
           where ors  = map fst . fromMaybe [] $ Map.lookup tid lgp
                 lgp' = Map.delete tid lgp

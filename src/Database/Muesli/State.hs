@@ -35,7 +35,7 @@ module Database.Muesli.State
   , withDataLock
   , withData
   , withGC
-  , withUpdateMan
+  , withCommitSgn
   -- * Utilities
   , mkNewTransactionId
   , mkNewDocumentKey
@@ -68,10 +68,13 @@ instance Show (Handle l) where
 data DBState l = DBState
   { logDbPath   :: DbPath
   , dataDbPath  :: DbPath
+  , commitDelay :: Int
   , masterState :: MVar (MasterState l)
   , dataState   :: MVar (DataState l)
-  , updateMan   :: MVar Bool    -- ^ Used to send messages to the update manager
-  , gcState     :: MVar GCState -- ^ Used to send messages to the GC thread
+  , commitSgn   :: MVar Bool    -- ^ Used to send the kill signal to the
+-- 'Database.Muesli.Commit.commitThread'
+  , gcState     :: MVar GCState -- ^ Used to communicate with the
+-- 'Database.Muesli.GC.gcThread'
   }
 
 instance Eq (DBState l) where
@@ -112,7 +115,7 @@ type GapsIndex      = Map DocSize [DocAddress]
 --
 -- 'Database.Muesli.Query.update' serializes the document before adding it to
 -- 'Database.Muesli.Commit.transUpdateList', and later
--- 'Database.Muesli.Commit.updateManThread' moves it in the pending log.
+-- 'Database.Muesli.Commit.commitThread' moves it in the pending log.
 type PendingIndex   = Map TransactionId [(LogRecord, ByteString)]
 
 -- | The type of the completed transaction log.
@@ -205,15 +208,15 @@ withData h f = liftIO $ bracketOnError
     putMVar (dataState $ unHandle h) d'
     return a)
 
--- | Standard 'bracket' function for the 'updateMan' lock that also allows
+-- | Standard 'bracket' function for the 'commitSgn' lock that also allows
 -- updating the 'Bool'.
-withUpdateMan :: MonadIO m => Handle l -> (Bool -> IO (Bool, a)) -> m a
-withUpdateMan h f = liftIO $ bracketOnError
-  (takeMVar . updateMan $ unHandle h)
-  (putMVar . updateMan $ unHandle h)
+withCommitSgn :: MonadIO m => Handle l -> (Bool -> IO (Bool, a)) -> m a
+withCommitSgn h f = liftIO $ bracketOnError
+  (takeMVar . commitSgn $ unHandle h)
+  (putMVar . commitSgn $ unHandle h)
   (\kill -> do
     (kill', a) <- f kill
-    putMVar (updateMan $ unHandle h) kill'
+    putMVar (commitSgn $ unHandle h) kill'
     return a)
 
 -- | Standard 'bracket' function for the 'gcState' lock that also allows

@@ -122,7 +122,8 @@ flagIt h name email = runQuery h $ do
 
 main :: IO ()
 main = bracket
-  (putStrLn "opening DB..." >> open (Just "blog.log") (Just "blog.dat"))
+  (putStrLn "opening DB..." >>
+   open (Just "blog.log") (Just "blog.dat") Nothing Nothing)
   (\(h :: Handle FileLogState) -> putStrLn "closing DB..." >> close h)
   (\h -> flagIt h "Bender Bending Rodríguez" "bender@ilovebender.com")
 

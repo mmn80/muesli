@@ -8,10 +8,7 @@
 -- Stability   : experimental
 -- Portability : portable
 --
--- Resource management types and functions.
---
--- This module reexports "Database.Muesli.Types", "Database.Muesli.Backend.Types"
--- and the file backend "Database.Muesli.Backend.File".
+-- Database resource management.
 ----------------------------------------------------------------------------
 
 module Database.Muesli.Handle
@@ -44,23 +41,32 @@ import           Database.Muesli.Indexes
 import           Database.Muesli.State
 import           Database.Muesli.Types
 import           System.FilePath               ((</>))
+import           Data.Time.Clock (NominalDiffTime)
 
 -- | Opens a database, reads the transaction log and builds the in-memory indexes.
 --
--- The resulting 'Handle' 's @l@ parameter should be instantiated by the user
+-- The @l@ parameter of the resulting 'Handle' should be instantiated by the user
 -- in order to specify a backend. For example, to use the file backend:
 --
 -- @
--- openDataBase :: FilePath -> FilePath -> IO (Handle FileLogState)
--- openDataBase logPath dataPath = open (Just logPath) (Just dataPath)
+-- import qualified Database.Muesli.Handle as DB
+--
+-- openDataBase :: FilePath -> FilePath -> IO (DB.Handle DB.FileLogState)
+-- openDataBase logPath dataPath = open (Just logPath) (Just dataPath) Nothing Nothing
 -- @
 open :: (MonadIO m, LogState l)
      => Maybe DbPath -- ^ Log path. Default is @data/docdb.log@.
      -> Maybe DbPath -- ^ Data path. Default is @data/docdb.dat@.
+     -> Maybe (Int, Int, NominalDiffTime) -- ^ 'Cache.LRUCache' parameters:
+-- (min cap in bytes, max cap in bytes, max age in seconds).
+-- Defaults are: (1MB, 10MB, 1min).
+     -> Maybe Int    -- ^ Commit delay in microseconds. Default is 100ms.
      -> m (Handle l)
-open lf df = do
+open lf df mbc mbcd = do
   let logPath = fromMaybe ("data" </> "docdb.log") lf
   let datPath = fromMaybe ("data" </> "docdb.dat") df
+  let (minc, maxc, maxa) = fromMaybe (0x100000, 0x100000 * 10, 60) mbc
+  let coDel = fromMaybe (100 * 1000) mbcd
   dh <- openDb datPath
   st <- openDb logPath >>= logInit
   let m = MasterState { logState  = st
@@ -79,19 +85,20 @@ open lf df = do
   let m'' = m' { gaps = GapsIndex.build $ mainIdx m' }
   mv <- liftIO $ newMVar m''
   let d = DataState { dataHandle = dh
-                    , dataCache  = Cache.empty 0x100000 (0x100000 * 10) 60
-                    } -- TODO: let user control cache params
+                    , dataCache  = Cache.empty minc maxc maxa
+                    }
   dv <- liftIO $ newMVar d
   um <- liftIO $ newMVar False
   gc <- liftIO $ newMVar IdleGC
-  let h = Handle DBState { logDbPath  = logPath
-                         , dataDbPath = datPath
-                         , masterState  = mv
-                         , dataState    = dv
-                         , updateMan    = um
-                         , gcState      = gc
+  let h = Handle DBState { logDbPath   = logPath
+                         , dataDbPath  = datPath
+                         , commitDelay = coDel
+                         , masterState = mv
+                         , dataState   = dv
+                         , commitSgn   = um
+                         , gcState     = gc
                          }
-  liftIO . forkIO $ updateManThread h True
+  liftIO . forkIO $ commitThread h True
   liftIO . forkIO $ gcThread h
   return h
 
@@ -163,7 +170,7 @@ debug h sIdx sCache = do
 close :: (MonadIO m, LogState l) => Handle l -> m ()
 close h = do
   withGC h . const $ return (KillGC, ())
-  withUpdateMan h . const $ return (True, ())
+  withCommitSgn h . const $ return (True, ())
   withMasterLock h $ \m -> closeDb $ logHandle (logState m)
   withDataLock   h $ \(DataState d _) -> closeDb d
 
