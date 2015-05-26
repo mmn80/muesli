@@ -47,9 +47,9 @@ data DynValue = DynValue
 data LRUCache = LRUCache
   { minCapacity :: !Int  -- ^ Minimum capacity under which 'maxAge' is ignored
   , maxCapacity :: !Int  -- ^ Maximum capacity above which oldest items are removed
-  , maxAge :: !NominalDiffTime
-  , size   :: !Int       -- ^ Current size (in bytes) of the cache
-  , queue  :: !(IntPSQ UTCTime DynValue)
+  , maxAge      :: !NominalDiffTime
+  , size        :: !Int  -- ^ Current size (in bytes) of the cache
+  , queue       :: !(IntPSQ UTCTime DynValue)
   }
 
 -- | Creates an empty cache.
@@ -59,9 +59,9 @@ empty :: Int             -- ^ Minimum capacity (in bytes)
       -> LRUCache
 empty minc maxc age = LRUCache { minCapacity = minc
                                , maxCapacity = maxc
-                               , maxAge = age
-                               , size   = 0
-                               , queue  = PQ.empty
+                               , maxAge      = age
+                               , size        = 0
+                               , queue       = PQ.empty
                                }
 
 -- | Apply cache's policy and removes items if necessary.

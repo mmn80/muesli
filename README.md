@@ -7,8 +7,7 @@ Use cases
 ---------
 * backing store for p2p / cloud nodes, mobile apps, etc.
 * higher capacity replacement for *acid-state* (only indexes are held in memory).
-* "no external dependency" substitute for *SQLite*
-(potentially easier to build and use on mobile devices, or even port to *GHCJS*).
+* no dependency substitute for *SQLite*.
 * *ACID*ic replacement for *CouchDB* and the like.
 
 Features
@@ -20,8 +19,9 @@ Features
 [`GHC.Generics`][gen] and [`deriving`][der].
 * **simple monad for writing queries**, with standard primitive operations like:
 `lookup`, `insert`, `update`, `delete`, `range`, `filter`.
-* range queries (`filter` and `range`) afford efficient cursor-like navigation
-(paging) through large datasets:
+* range queries (`filter` and `range`) afford efficient **cursor-like
+navigation** (paging) through large datasets. For example this is the
+equivalent SQL for `filter`:
 ```SQL
 SELECT TOP page * FROM table
 WHERE (filterFld = filterVal) AND
@@ -32,11 +32,12 @@ ORDER BY field, ID DESC
 * **easy to reason about performance**: all primitive queries run in **O(log n)**.
 * **type safety**: impossible to attempt deserializing a record at a wrong type
 (or address), and risk getting bogus data with no error thrown.
-IDs are tagged with a phantom type and created only by the database.
+References are tagged with a phantom type and created only by the database.
 There are also `Num`/`Integral` instances to support more generic apps,
 but normally those are not needed.
-* easily implementable **multiple backends** supported: currently *file*, and
-soon (:tm:) *in-memory*, *remote*.
+* **multiple backends** supported: currently *file*, and soon (:tm:)
+*in-memory*, *remote*.
+* **portability**: it should work on all platforms, including mobile.
 * **replication**: soon (:tm:)
 
 *Note: some of these features become misfeatures for certain scenarios which
@@ -73,6 +74,7 @@ data BlogPost = BlogPost
   , postContributors :: [Reference Person]
   , postTags         :: [Sortable String]
   , postContent      :: Content
+  , publishedDate    :: Sortable DateTime
   } deriving (Show, Generic, Serialize)
 
 instance Document BlogPost
@@ -108,7 +110,8 @@ Then you can run these transactions with `runQuery` inside some `MonadIO` contex
 Note that `Transaction` itself is an instance of `MonadIO`, so you can do
 arbitrary IO inside.
 The `l` parameter specifies which storage backend you use.
-Currently only a binary file backend is implemented, used with `Handle FileLogState`.
+Currently only a portable binary file backend is implemented, used with
+`Handle FileLogState`.
 
 ```Haskell
 import Database.Muesli.Query
@@ -174,8 +177,6 @@ instances for `Indexable` and `Document` which are used by a [generic function][
 * transactions defer updates by collecting IDs and serialized data,
 which are checked (under lock) for consistency at the end
 
-See the early [notes][].
-
 Change log
 ----------
 Available [here][changes].
@@ -191,6 +192,5 @@ MIT license. See the [license file][MIT] for details.
 [gen]: https://downloads.haskell.org/~ghc/latest/docs/html/users_guide/generic-programming.html "Generic Programming - GHC User's Guide"
 [der]: https://downloads.haskell.org/~ghc/latest/docs/html/users_guide/deriving.html "Extensions to the deriving mechanism - GHC User's Guide"
 [orf]: https://ghc.haskell.org/trac/ghc/wiki/Records/OverloadedRecordFields "Overloaded Record Fields - GHC Wiki"
-[notes]: https://github.com/clnx/muesli/blob/master/Notes.md "Muesli Implementation Notes"
 [changes]: https://github.com/clnx/muesli/blob/master/CHANGELOG.md "Muesli change log"
 [MIT]: https://github.com/clnx/muesli/blob/master/LICENSE.md "MIT License File"

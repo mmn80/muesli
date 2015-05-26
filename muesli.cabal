@@ -3,7 +3,7 @@ category:            Database
 version:             0.1.0.0
 synopsis:            A simple document-oriented database
 description:
-  `muesli` is an easy to use
+  @muesli@ is an easy to use
   <https://en.wikipedia.org/wiki/Multiversion_concurrency_control MVCC>
   <https://en.wikipedia.org/wiki/Document-oriented_database document-oriented database>
   featuring ACID transactions, automatic index management and minimal boilerplate.
@@ -18,7 +18,7 @@ homepage:            https://github.com/clnx/muesli
 bug-reports:         https://github.com/clnx/muesli/issues
 author:              Călin Ardelean
 maintainer:          Călin Ardelean <calinucs@gmail.com>
-copyright:           Copyright (C) 2015 Călin Ardelean
+copyright:           Copyright (c) 2015 Călin Ardelean
 license:             MIT
 license-file:        LICENSE.md
 stability:           experimental
@@ -48,7 +48,7 @@ library
     Database.Muesli.Commit,
     Database.Muesli.GC
   build-depends:
-    base >=4.8,
+    base             >= 4.8 && < 5,
     mtl,
     time,
     containers,
@@ -58,5 +58,5 @@ library
     hashable,
     filepath,
     directory
-  hs-source-dirs:      src
-  default-language:    Haskell2010
+  hs-source-dirs:    src
+  default-language:  Haskell2010

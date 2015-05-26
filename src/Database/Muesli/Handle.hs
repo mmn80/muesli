@@ -30,6 +30,7 @@ import qualified Data.IntMap.Strict            as IntMap
 import qualified Data.Map.Strict               as Map
 import           Data.Maybe                    (fromMaybe)
 import           Data.Time                     ()
+import           Data.Time.Clock               (NominalDiffTime)
 import qualified Database.Muesli.Allocator     as GapsIndex
 import           Database.Muesli.Backend.File
 import           Database.Muesli.Backend.Types
@@ -41,7 +42,6 @@ import           Database.Muesli.Indexes
 import           Database.Muesli.State
 import           Database.Muesli.Types
 import           System.FilePath               ((</>))
-import           Data.Time.Clock (NominalDiffTime)
 
 -- | Opens a database, reads the transaction log and builds the in-memory indexes.
 --
