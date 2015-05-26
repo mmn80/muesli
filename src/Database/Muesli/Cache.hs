@@ -45,17 +45,17 @@ data DynValue = DynValue
 -- | A LRU cache that uses a lower capacity in periods of inactivity.
 -- This behaviour would be useful for things like long lived Android services.
 data LRUCache = LRUCache
-  { minCapacity :: !Int -- ^ Minimum capacity under which 'maxAge' is ignored
-  , maxCapacity :: !Int -- ^ Maximum capacity above which oldest items are removed
+  { minCapacity :: !Int  -- ^ Minimum capacity under which 'maxAge' is ignored
+  , maxCapacity :: !Int  -- ^ Maximum capacity above which oldest items are removed
   , maxAge :: !NominalDiffTime
-  , size   :: !Int      -- ^ Current size of the cache
+  , size   :: !Int       -- ^ Current size (in bytes) of the cache
   , queue  :: !(IntPSQ UTCTime DynValue)
   }
 
 -- | Creates an empty cache.
-empty :: Int             -- ^ Minimum capacity
-      -> Int             -- ^ Maximum capacity
-      -> NominalDiffTime -- ^ Maximum age
+empty :: Int             -- ^ Minimum capacity (in bytes)
+      -> Int             -- ^ Maximum capacity (in bytes)
+      -> NominalDiffTime -- ^ Maximum age (in seconds)
       -> LRUCache
 empty minc maxc age = LRUCache { minCapacity = minc
                                , maxCapacity = maxc
@@ -84,7 +84,7 @@ insert :: Typeable a
        => UTCTime -- ^ Current time
        -> Int     -- ^ Key
        -> a       -- ^ Value
-       -> Int     -- ^ Size
+       -> Int     -- ^ Size (in bytes)
        -> LRUCache
        -> LRUCache
 insert now k a sz c = trim now $! c { size  = size c + sz -

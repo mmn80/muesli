@@ -22,24 +22,26 @@
 -- Muesli markup types and typeclasses.
 --
 -- Normally, with the @DeriveAnyClass@ and @DeriveGeneric@ extensions enabled,
--- types that can be used as documents need a
+-- types can be marked up as documents with a
 --
 -- @
 -- deriving (Generic, Serialize)
 -- @
 --
--- clause, and a separate empty 'Document' instance. For field types,
--- the following will suffice:
+-- clause, and a separate empty 'Document' instance.
+--
+-- For structured field types, the following will suffice:
 --
 -- @
 -- deriving (Generic, Serialize, Indexable)
 -- @
 --
--- Then 'Reference', 'Sortable' and 'Unique' can be used inside to mark up
--- the fields that will automatically get indexed, and thus become queryable
--- with the primitives in the "Database.Muesli.Query" module.
--- Also, the record syntax must be used and the accesor name will become the
--- property name used in queries.
+-- Then 'Reference', 'Sortable' and 'Unique' can be used inside document types
+-- to mark up the fields that should be automatically indexed, becoming queryable
+-- with the primitives in "Database.Muesli.Query".
+--
+-- The record syntax must be used, and the accesor name will become the
+-- 'Property' name used in queries.
 ----------------------------------------------------------------------------
 
 module Database.Muesli.Types
@@ -176,10 +178,11 @@ newtype Reference a = Reference { unReference :: IxKey }
 instance Show (Reference a) where
   showsPrec p = showsPrec p . unReference
 
--- | Marks a field available for sorting and 'range' queries. Indexing requires
--- a 'ToKey' instance. Apart from the provided 'Bool', 'Int' and 'UTCTime'
--- instances, there is an overlappable fallback instance based on converting
--- the 'Show' string representation to an 'IxKey' by taking the first
+-- | Marks a field available for sorting and 'range' queries.
+--
+-- Indexing requires a 'ToKey' instance. Apart from the provided 'Bool', 'Int'
+-- and 'UTCTime' instances, there is an overlappable fallback instance based on
+-- converting the 'Show' string representation to an 'IxKey' by taking the first
 -- 4 or 8 bytes. This is good enough for primitive string sorting.
 newtype Sortable a = Sortable { unSortable :: a }
   deriving (Eq, Ord, Bounded, Serialize)
@@ -226,8 +229,8 @@ instance Hashable a => ToKey (Unique (Sortable a)) where
 instance {-# OVERLAPPABLE #-} Hashable a => ToKey (Unique a) where
   toKey (Unique a) = fromIntegral $ hash a
 
--- | This class is used by the generic scrapper to extract indexable keys
--- from any 'Document' 's fields. There are instances for 'Reference', 'Sortable'
+-- | This class is used by the generic scrapper to extract indexable keys from
+-- the fields of a 'Document'. There are instances for 'Reference', 'Sortable'
 -- and 'Unique', a general 'Foldable' instance, and a special one for 'Maybe'
 -- that converts 'Nothing' into 0, such that null values will be indexed too,
 -- and become queryable with 'Database.Muesli.Query.filter'.

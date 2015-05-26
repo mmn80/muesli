@@ -16,8 +16,8 @@
 --
 -- The 'Transaction' monad and its primitive queries.
 --
--- All queries in this module are run on internal indexes and perform a
--- __O(log(n))__ worst case operation.
+-- All queries in this module are run on indexes and perform an
+-- __O(log n)__ worst case operation.
 ----------------------------------------------------------------------------
 
 module Database.Muesli.Query
@@ -25,8 +25,8 @@ module Database.Muesli.Query
   , module Database.Muesli.Backend.Types
 -- * The Transaction monad
   , Transaction
-  , TransactionAbort (..)
   , runQuery
+  , TransactionAbort (..)
 -- * Primitive queries
 -- ** CRUD operations
   , lookup
@@ -197,7 +197,7 @@ page_ f mdid = Transaction $ do
 -- large dataset. For this purpose you should remember the last 'Reference'
 -- from the previous page and give it as the /sortKey/ argument below.
 -- This is needed since the sortable field may not have unique values, so
--- remembering just the /sortVal/ is insufficint.
+-- remembering just the /sortVal/ is insufficient.
 --
 -- The corresponding SQL is:
 --
