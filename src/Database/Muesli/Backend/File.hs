@@ -52,7 +52,7 @@ instance DbHandle FileHandle where
 
   withDb path f = liftIO . withBinaryFile path ReadWriteMode $ f . FileHandle
 
-  swapDb oldPath path = liftIO (renameFile path oldPath) >> openDb path
+  swapDb oldPath path = liftIO (renameFile path oldPath) >> openDb oldPath
 
 instance DataHandle FileHandle where
   readDocument hnd r = do
