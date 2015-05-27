@@ -56,8 +56,6 @@ instance MonadIO m => MonadIO (Transaction l m) where
   liftIO = Transaction . liftIO
 
 -- | State held inside a 'Transaction'.
---
--- Note: The 'Transaction' type is internally 'StateT' ('TransactionState' l) m a.
 data TransactionState l = TransactionState
   { transHandle     :: !(Handle l)
 -- | Allocated by 'runQuery' with 'mkNewTransactionId' (auto-incremental)
@@ -67,7 +65,8 @@ data TransactionState l = TransactionState
 -- of these, so the transaction is aborted if concurrent transactions update
 -- any of them.
   , transReadList   :: ![DocumentKey]
--- | Accumulates all updated or deleted documents' keys.
+-- | Accumulates all updated or deleted documents' keys together with the
+-- serialized data.
   , transUpdateList :: ![(LogRecord, ByteString)]
   }
 
@@ -210,8 +209,7 @@ commitThread h w = do
           return (DataState hnd cache', ())
         withMaster h $ \m -> do
           let rs' = fst <$> rs
-          let trec = Completed tid
-          st <- logAppend (logState m) [trec]
+          st <- logAppend (logState m) [Completed tid]
           let (lgp, lgc) = updateLog tid (keepTrans m) (logPend m) (logComp m)
           let m' = m { logState = st
                      , logPend  = lgp

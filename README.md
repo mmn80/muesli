@@ -149,7 +149,7 @@ which is good enough for simple sorting)
 - [ ] replication
 - [ ] more advanced & flexible index system supporting complex indexes, joins, etc.
 - [ ] fancy query language
-- [ ] optimize reads: faster cache, mainIdx (hastable maybe?)
+- [ ] optimize reads: faster cache, mainIdx (hashtable maybe?)
 - [x] waiting for [`OverloadedRecordFields`][orf]
 
 Implementation
