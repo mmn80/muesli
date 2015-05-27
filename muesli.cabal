@@ -1,6 +1,6 @@
 name:                muesli
 category:            Database
-version:             0.1.0.0
+version:             0.1.0.1
 synopsis:            A simple document-oriented database
 description:
   @muesli@ is an easy to use
