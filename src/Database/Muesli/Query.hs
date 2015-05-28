@@ -36,9 +36,11 @@ module Database.Muesli.Query
 -- ** Range queries
   , range
   , rangeK
+  , rangeF
   , filter
 -- ** Queries on unique fields
   , lookupUnique
+  , lookupUniqueK
   , updateUnique
 -- ** Other
   , size
@@ -71,14 +73,14 @@ import           Prelude                       hiding (filter, lookup)
 
 -- | Dereferences the given key. Returns 'Nothing' if the key is not found.
 lookup :: (Document a, LogState l, MonadIO m) => Reference a ->
-           Transaction l m (Maybe (Reference a, a))
+           Transaction l m (Maybe a)
 lookup (Reference did) = Transaction $ do
   t <- S.get
   mbr <- withMasterLock (transHandle t) $ \m ->
            return $ findFirstDoc m t did
   mba <- maybe (return Nothing) (\(r, mbs) -> do
            a <- getDocument (transHandle t) r mbs
-           return $ Just (Reference did, a))
+           return $ Just a)
          mbr
   S.put t { transReadList = did : transReadList t }
   return mba
@@ -95,9 +97,9 @@ findFirstDoc m t did = do
 
 -- | Returns a 'Reference' to a document uniquely determined by the given
 -- 'Unique' key value, or 'Nothing' if the key is not found.
-lookupUnique :: (ToKey (Unique b), MonadIO m) =>
+lookupUniqueK :: (ToKey (Unique b), MonadIO m) =>
                  Property a -> Unique b -> Transaction l m (Maybe (Reference a))
-lookupUnique p ub = Transaction $ do
+lookupUniqueK p ub = Transaction $ do
   t <- S.get
   let u = toKey ub
   withMasterLock (transHandle t) $ \m -> return . liftM Reference $
@@ -107,12 +109,21 @@ lookupUnique p ub = Transaction $ do
                             IntMap.lookup (fromIntegral u))
   where pp = fst $ unProperty p
 
--- | Performs a 'lookupUnique' and then, depending whether the key exists or not,
+
+-- | Returns a document uniquely determined by the given
+-- 'Unique' key value, or 'Nothing' if the key is not found.
+lookupUnique :: (Document a, LogState l, ToKey (Unique b), MonadIO m) =>
+                 Property a -> Unique b -> Transaction l m (Maybe (Reference a, a))
+lookupUnique p ub = lookupUniqueK p ub >>=
+                    maybe (return Nothing)
+                          (\k -> liftM (liftM (k,)) (lookup k))
+
+-- | Performs a 'lookupUniqueK' and then, depending whether the key exists or not,
 -- either 'insert's or 'update's the respective document.
 updateUnique :: (Document a, ToKey (Unique b), MonadIO m) =>
                  Property a -> Unique b -> a -> Transaction l m (Reference a)
 updateUnique p u a = do
-  mdid <- lookupUnique p u
+  mdid <- lookupUniqueK p u
   case mdid of
     Nothing  -> insert a
     Just did -> update did a >> return did
@@ -204,15 +215,15 @@ page_ f mdid = Transaction $ do
 -- @
 -- SELECT TOP page * FROM table
 -- WHERE (sortVal = NULL OR sortFld < sortVal) AND (sortKey = NULL OR ID < sortKey)
--- ORDER BY field, ID DESC
+-- ORDER BY sortFld, ID DESC
 -- @
 range :: (Document a, ToKey (Sortable b), LogState l, MonadIO m)
-      => Maybe (Sortable b)  -- ^ The @sortVal@ in the below SQL.
-      -> Maybe (Reference a) -- ^ The @sortKey@ below.
+      => Int                 -- ^ The @page@ below.
       -> Property a          -- ^ The @sortFld@ and @table@ below.
-      -> Int                 -- ^ The @page@ below.
+      -> Maybe (Sortable b)  -- ^ The @sortVal@ in the below SQL.
+      -> Maybe (Reference a) -- ^ The @sortKey@ below.
       -> Transaction l m [(Reference a, a)]
-range mst msti p pg = page_ f mst
+range pg p mst msti = page_ f mst
   where f st m = fromMaybe [] $ do
                    ds <- IntMap.lookup (prop2Int p) (sortIdx m)
                    return $ getPage st (rval msti) pg ds
@@ -232,21 +243,33 @@ range mst msti p pg = page_ f mst
 -- SELECT TOP page * FROM table
 -- WHERE (filterFld = filterVal) AND
 --       (sortVal = NULL OR sortFld < sortVal) AND (sortKey = NULL OR ID < sortKey)
--- ORDER BY field, ID DESC
+-- ORDER BY sortFld, ID DESC
 -- @
-filter :: (Document a, ToKey (Sortable b), LogState l, MonadIO m)
-       => Maybe (Reference c)  -- ^ The @filterVal@ in the below SQL.
+rangeF :: (Document a, ToKey (Sortable b), LogState l, MonadIO m)
+       => Int                  -- ^ The @page@ below.
+       -> Property a           -- ^ The @sortFld@ and @table@ below.
+       -> Maybe (Reference c)  -- ^ The @filterVal@ in the below SQL.
+       -> Property a           -- ^ The @filterFld@ and @table@ below.
        -> Maybe (Sortable b)   -- ^ The @sortVal@ below.
        -> Maybe (Reference a)  -- ^ The @sortKey@ below.
-       -> Property a           -- ^ The @sortFld@ and @table@ below.
-       -> Property a           -- ^ The @filterFld@ and @table@ below.
-       -> Int                  -- ^ The @page@ below.
        -> Transaction l m [(Reference a, a)]
-filter mdid mst msti fprop sprop pg = page_ f mst
+rangeF pg fprop mdid sprop mst msti = page_ f mst
   where f _ m = fromMaybe [] . liftM (getPage (ival mst) (rval msti) pg) $
                   IntMap.lookup (fromIntegral . fst . unProperty $ fprop) (refIdx m) >>=
                   IntMap.lookup (fromIntegral $ maybe 0 unReference mdid) >>=
                   IntMap.lookup (prop2Int sprop)
+
+-- | Runs a filter query on a 'Reference' field, with results sorted
+-- on a different 'Sortable' field.
+--
+-- Unlike 'rangeF', it returnes all documents, not just a range.
+filter :: (Document a, LogState l, MonadIO m)
+       => Property a           -- ^ The @filterFld@ and @table@ below.
+       -> Maybe (Reference b)  -- ^ The @filterVal@ in the below SQL.
+       -> Property a           -- ^ The @sortFld@ and @table@ below.
+       -> Transaction l m [(Reference a, a)]
+filter fprop mdid sprop = rangeF maxBound fprop mdid sprop
+                          (Nothing :: Maybe (Sortable Int)) Nothing
 
 pageK_ :: (MonadIO m, ToKey (Sortable b)) => (Int -> MasterState l -> [Int]) ->
            Maybe (Sortable b) -> Transaction l m [Reference a]
@@ -261,12 +284,12 @@ pageK_ f mdid = Transaction $ do
 -- | Like 'range', but only returns the keys and does not touch the data file.
 -- This may be used for implementing a faster deleteRange query, for example.
 rangeK :: (Document a, ToKey (Sortable b), MonadIO m)
-       => Maybe (Sortable b)
-       -> Maybe (Reference a)
+       => Int
        -> Property a
-       -> Int
+       -> Maybe (Sortable b)
+       -> Maybe (Reference a)
        -> Transaction l m [Reference a]
-rangeK mst msti p pg = pageK_ f mst
+rangeK pg p mst msti = pageK_ f mst
   where f st m = fromMaybe [] $ getPage st (rval msti) pg <$>
                                 IntMap.lookup (prop2Int p) (sortIdx m)
 
