@@ -126,9 +126,9 @@ readLog m = do
           Just rps -> let rs = fst <$> rps in
                       m { logPend  = Map.delete tid logp
                         , mainIdx  = updateMainIdx (mainIdx m) rs
-                        , unqIdx   = updateUnqIdx (unqIdx m) rs
+                        , unqIdx   = updateUniquenqIdx  (unqIdx  m) rs
                         , sortIdx  = updateSortIdx (sortIdx m) rs
-                        , refIdx   = updateRefIdx (refIdx m) rs
+                        , refIdx   = updateRefIdx  (refIdx  m) rs
                         }
 
 -- | Sends a message to the 'Database.Muesli.GC.gcThread' requesting GC.

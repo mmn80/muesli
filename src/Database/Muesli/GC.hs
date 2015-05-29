@@ -82,7 +82,7 @@ gcThread h = do
       let dataPathNew = dataPath ++ ".new"
       buildDataFile dataPathNew rs2 h
       let mIdx = updateMainIdx IntMap.empty rs'
-      let uIdx = updateUnqIdx  IntMap.empty rs'
+      let uIdx = updateUniquenqIdx  IntMap.empty rs'
       let iIdx = updateSortIdx IntMap.empty rs'
       let rIdx = updateRefIdx  IntMap.empty rs'
       when (forceEval mIdx iIdx rIdx) $ withCommitSgn h $ \kill -> do
@@ -107,7 +107,7 @@ gcThread h = do
                               , logPend   = logp'
                               , logComp   = Map.empty
                               , mainIdx   = updateMainIdx mIdx ncrs
-                              , unqIdx    = updateUnqIdx  uIdx ncrs
+                              , unqIdx    = updateUniquenqIdx  uIdx ncrs
                               , sortIdx   = updateSortIdx iIdx ncrs
                               , refIdx    = updateRefIdx  rIdx ncrs
                               }

@@ -1,11 +1,12 @@
 ### 0.1.1.0
 
-* renamed `filter` to `rangeF`
-* changed argument order in `range`, `rangeK`, `rangeF`
-* added new query `filter` (just filters, without range)
 * `lookup` returns just `Maybe a`
-* renamed `lookupUnique` to `lookupUniqueK`
-* added `lookupUnique` (that does something like `lookupUniqueK` >>= 'lookup')
+* renamed `lookupUnique` to `unique'`
+* added `unique` (that does something like `unique'` >>= 'lookup')
+* renamed `filter` to `filterRange`
+* added `filter` (just filters, without range)
+* renamed `rangeK` to `range'`
+* changed argument order in `range`, `range'`, `filterRange` to resemble SQL
 
 ### 0.1.0.1
 

@@ -17,7 +17,7 @@ module Database.Muesli.Indexes
   ( updateMainIdx
   , updateRefIdx
   , updateSortIdx
-  , updateUnqIdx
+  , updateUniquenqIdx
   ) where
 
 import qualified Data.IntMap.Strict    as Map
@@ -33,8 +33,8 @@ updateMainIdx = foldl' f
                   Map.insert did rs' idx
 
 -- | Updates the 'UniqueIndex'.
-updateUnqIdx :: UniqueIndex -> [LogRecord] -> UniqueIndex
-updateUnqIdx = foldl' f
+updateUniquenqIdx :: UniqueIndex -> [LogRecord] -> UniqueIndex
+updateUniquenqIdx = foldl' f
   where f idx r = foldl' g idx (recUniques r)
           where
             did = fromIntegral (recDocumentKey r)

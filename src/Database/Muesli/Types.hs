@@ -230,7 +230,7 @@ instance {-# OVERLAPPABLE #-} Show a => ToKey (Sortable a) where
                   ss     -> ss
 
 -- | 'Unique' fields act as primary keys, and can be queried with
--- 'Database.Muesli.Query.lookupUnique' and 'Database.Muesli.Query.updateUnique'.
+-- 'Database.Muesli.Query.unique' and 'Database.Muesli.Query.updateUnique'.
 -- The 'Hashable' instance is used to generate the key.
 --
 -- For fields that need to be both unique and sortable, use

@@ -21,13 +21,13 @@ Features
 `lookup`, `insert`, `update`, `delete`, `range`, `filter`.
 * range queries (`filter` and `range`) afford efficient **cursor-like
 navigation** (paging) through large datasets. For example this is the
-equivalent SQL for `filter`:
+equivalent SQL for `filterRange`:
 ```SQL
 SELECT TOP page * FROM table
 WHERE (filterFld = filterVal) AND
       (sortVal = NULL OR sortFld < sortVal) AND
       (sortKey = NULL OR ID < sortKey)
-ORDER BY field, ID DESC
+ORDER BY sortFld, ID DESC
 ```
 * **easy to reason about performance**: all primitive queries run in **O(log n)**.
 * **type safety**: impossible to attempt deserializing a record at a wrong type
@@ -96,8 +96,7 @@ updatePerson name email = do
   return (pid, p)
 
 postsByContrib :: Reference Person -> Transaction l m [(Reference BlogPost, BlogPost)]
-postsByContrib pid =
-  filter (Just pid) Nothing Nothing "postContributors" "postTitle" 1000
+postsByContrib pid = filter "postContributors" (Just pid) "postTitle"
 
 flagContributor :: Reference Person -> Transaction l m ()
 flagContributor pid = do
