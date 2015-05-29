@@ -103,7 +103,7 @@ updatePerson name email = do
   return (pid, p)
 
 postsByContrib :: Reference Person -> Transaction l m [(Reference BlogPost, BlogPost)]
-postsByContrib pid = filter "postContributors" (Just pid) "postTitle"
+postsByContrib pid = filter "postContributors" (Just pid) "postTitle" SortAsc
 
 flagContributor :: Reference Person -> Transaction l m ()
 flagContributor pid = do
@@ -155,7 +155,7 @@ which is good enough for basic sorting)
 - [ ] replication
 - [ ] more advanced & flexible index system supporting complex indexes, joins, etc.
 - [ ] fancy query language
-- [ ] optimize reads: faster cache, mainIdx (hashtable maybe?)
+- [ ] optimize reads: faster cache, use hashtable for mainIdx
 - [x] waiting for [`OverloadedRecordFields`][orf]
 
 Implementation
