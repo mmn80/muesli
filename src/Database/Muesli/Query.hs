@@ -39,6 +39,7 @@ module Database.Muesli.Query
   , update
   , delete
 -- ** Range queries
+  , SortOrder (..)
   , range
   , range'
   , filterRange
@@ -191,6 +192,10 @@ delete (Reference did) = Transaction $ do
                     }
   S.put t { transUpdateList = (r, B.empty) : transUpdateList t }
 
+-- | Sort order for range queries.
+data SortOrder = SortAsc | SortDesc
+  deriving (Eq, Show)
+
 -- | Runs a range query on a 'Sortable' field.
 --
 -- It can be used as a cursor, for precise and efficient paging through a
@@ -204,20 +209,21 @@ delete (Reference did) = Transaction $ do
 -- @
 -- SELECT TOP page * FROM table
 -- WHERE (sortVal = NULL OR sortFld < sortVal) AND (sortKey = NULL OR ID < sortKey)
--- ORDER BY sortFld, ID DESC
+-- ORDER BY sortFld, ID sortOrder
 -- @
 range :: (Document a, ToKey (Sortable b), LogState l, MonadIO m)
       => Int                 -- ^ The @page@ below.
       -> Property a          -- ^ The @sortFld@ and @table@ below.
       -> Maybe (Sortable b)  -- ^ The @sortVal@ in the below SQL.
       -> Maybe (Reference a) -- ^ The @sortKey@ below.
+      -> SortOrder           -- ^ The @sortOrder@ below.
       -> Transaction l m [(Reference a, a)]
-range pg p mst msti = page_ (range_ pg p msti) mst
+range pg p mst msti so = page_ (range_ pg p msti so) mst so
 
-range_ :: Document a => Int -> Property a -> Maybe (Reference b) -> Int ->
-          MasterState l -> [Int]
-range_ pg p msti st m = fromMaybe [] $ getPage st (rval msti) pg <$>
-                                       IntMap.lookup (prop2Int p) (sortIdx m)
+range_ :: Document a => Int -> Property a -> Maybe (Reference b) ->
+          SortOrder -> Int -> MasterState l -> [Int]
+range_ pg p msti so st m = fromMaybe [] $ getPage st (rval msti) pg so <$>
+                                          IntMap.lookup (prop2Int p) (sortIdx m)
 
 -- | Like 'range', but returns only the keys.
 range' :: (Document a, ToKey (Sortable b), MonadIO m)
@@ -225,8 +231,9 @@ range' :: (Document a, ToKey (Sortable b), MonadIO m)
        -> Property a
        -> Maybe (Sortable b)
        -> Maybe (Reference a)
+       -> SortOrder
        -> Transaction l m [Reference a]
-range' pg p mst msti = pageK_ (range_ pg p msti) mst
+range' pg p mst msti so = pageK_ (range_ pg p msti so) mst so
 
 -- | Runs a filter-and-range query on a 'Reference' field, with results sorted
 -- on a different 'Sortable' field.
@@ -243,24 +250,25 @@ range' pg p mst msti = pageK_ (range_ pg p msti) mst
 -- SELECT TOP page * FROM table
 -- WHERE (filterFld = filterVal) AND
 --       (sortVal = NULL OR sortFld < sortVal) AND (sortKey = NULL OR ID < sortKey)
--- ORDER BY sortFld, ID DESC
+-- ORDER BY sortFld, ID sortOrder
 -- @
 filterRange :: (Document a, ToKey (Sortable b), LogState l, MonadIO m)
-            => Int                  -- ^ The @page@ below.
-            -> Property a           -- ^ The @sortFld@ and @table@ below.
-            -> Maybe (Reference c)  -- ^ The @filterVal@ in the below SQL.
-            -> Property a           -- ^ The @filterFld@ and @table@ below.
-            -> Maybe (Sortable b)   -- ^ The @sortVal@ below.
-            -> Maybe (Reference a)  -- ^ The @sortKey@ below.
+            => Int                 -- ^ The @page@ below.
+            -> Property a          -- ^ The @sortFld@ and @table@ below.
+            -> Maybe (Reference c) -- ^ The @filterVal@ in the below SQL.
+            -> Property a          -- ^ The @filterFld@ and @table@ below.
+            -> Maybe (Sortable b)  -- ^ The @sortVal@ below.
+            -> Maybe (Reference a) -- ^ The @sortKey@ below.
+            -> SortOrder           -- ^ The @sortOrder@ below.
             -> Transaction l m [(Reference a, a)]
-filterRange pg fprop mdid sprop mst msti =
-  page_ (filterRange_ pg fprop mdid sprop mst msti) mst
+filterRange pg fprop mdid sprop mst msti so =
+  page_ (filterRange_ pg fprop mdid sprop mst msti so) mst so
 
 filterRange_ :: (ToKey (Sortable b), Document a) => Int -> Property a
              -> Maybe (Reference c) -> Property a -> Maybe (Sortable b)
-             -> Maybe (Reference a) -> Int -> MasterState l -> [Int]
-filterRange_ pg fprop mdid sprop mst msti _ m =
-  fromMaybe [] . liftM (getPage (ival mst) (rval msti) pg) $
+             -> Maybe (Reference a) -> SortOrder -> Int -> MasterState l -> [Int]
+filterRange_ pg fprop mdid sprop mst msti so _ m =
+  fromMaybe [] . liftM (getPage (ival so mst) (rval msti) pg so) $
     IntMap.lookup (fromIntegral . fst . unProperty $ fprop) (refIdx m) >>=
     IntMap.lookup (fromIntegral $ maybe 0 unReference mdid) >>=
     IntMap.lookup (prop2Int sprop)
@@ -273,18 +281,20 @@ filterRange' :: (Document a, ToKey (Sortable b), LogState l, MonadIO m)
              -> Property a
              -> Maybe (Sortable b)
              -> Maybe (Reference a)
+             -> SortOrder
              -> Transaction l m [Reference a]
-filterRange' pg fprop mdid sprop mst msti =
-  pageK_ (filterRange_ pg fprop mdid sprop mst msti) mst
+filterRange' pg fprop mdid sprop mst msti so =
+  pageK_ (filterRange_ pg fprop mdid sprop mst msti so) mst so
 
 -- | Runs a filter query on a 'Reference' field, with results sorted
 -- on a different 'Sortable' field.
 --
--- Unlike 'filterRange', it returnes all documents, not just a range.
+-- Like 'filterRange', but returns all documents, not just a range.
 filter :: (Document a, LogState l, MonadIO m)
-       => Property a           -- ^ The @filterFld@ and @table@ below.
-       -> Maybe (Reference b)  -- ^ The @filterVal@ in the below SQL.
-       -> Property a           -- ^ The @sortFld@ and @table@ below.
+       => Property a
+       -> Maybe (Reference b)
+       -> Property a
+       -> SortOrder
        -> Transaction l m [(Reference a, a)]
 filter fprop mdid sprop = filterRange maxBound fprop mdid sprop
                           (Nothing :: Maybe (Sortable Int)) Nothing
@@ -294,17 +304,18 @@ filter' :: (Document a, LogState l, MonadIO m)
         => Property a
         -> Maybe (Reference b)
         -> Property a
+        -> SortOrder
         -> Transaction l m [Reference a]
 filter' fprop mdid sprop = filterRange' maxBound fprop mdid sprop
                            (Nothing :: Maybe (Sortable Int)) Nothing
 
 page_ :: (Document a, ToKey (Sortable b), LogState l, MonadIO m) =>
-         (Int -> MasterState l -> [Int]) -> Maybe (Sortable b) ->
+         (Int -> MasterState l -> [Int]) -> Maybe (Sortable b) -> SortOrder ->
           Transaction l m [(Reference a, a)]
-page_ f mdid = Transaction $ do
+page_ f mst so = Transaction $ do
   t <- S.get
   dds <- withMasterLock (transHandle t) $ \m -> do
-           let ds = f (ival mdid) m
+           let ds = f (ival so mst) m
            let mbds = findFirstDoc m t . fromIntegral <$> ds
            return $ concatMap (foldMap pure) mbds
   dds' <- forM (reverse dds) $ \(d, mbs) -> do
@@ -314,25 +325,26 @@ page_ f mdid = Transaction $ do
   return dds'
 
 pageK_ :: (MonadIO m, ToKey (Sortable b)) => (Int -> MasterState l -> [Int]) ->
-           Maybe (Sortable b) -> Transaction l m [Reference a]
-pageK_ f mdid = Transaction $ do
+           Maybe (Sortable b) -> SortOrder -> Transaction l m [Reference a]
+pageK_ f mst so = Transaction $ do
   t <- S.get
   dds <- withMasterLock (transHandle t) $ \m -> return $
     concatMap (map (recDocumentKey . fst) . foldMap pure . findFirstDoc m t .
-    fromIntegral) $ f (ival mdid) m
+    fromIntegral) $ f (ival so mst) m
   S.put t { transReadList = dds ++ transReadList t }
   return (Reference <$> dds)
 
-getPage :: Int -> Int -> Int -> IntMap IntSet -> [Int]
-getPage sta sti pg idx = go sta pg []
+getPage :: Int -> Int -> Int -> SortOrder -> IntMap IntSet -> [Int]
+getPage sta sti pg so idx = go sta pg []
   where go st p acc =
           if p == 0 then acc
-          else case IntMap.lookupLT st idx of
+          else case fn st idx of
                  Nothing      -> acc
                  Just (n, is) ->
                    let (p', ids) = getPage2 sti p is in
                    if p' == 0 then ids ++ acc
                    else go n p' $ ids ++ acc
+        fn = if so == SortDesc then IntMap.lookupLT else IntMap.lookupGT
 
 getPage2 :: Int -> Int -> IntSet -> (Int, [Int])
 getPage2 sta pg idx = go sta pg []
@@ -353,8 +365,8 @@ size p = Transaction $ do
 rval :: Maybe (Reference a) -> Int
 rval = fromIntegral . unReference . fromMaybe maxBound
 
-ival :: ToKey (Sortable a) => Maybe (Sortable a) -> Int
-ival = fromIntegral . maybe maxBound toKey
+ival :: ToKey (Sortable a) => SortOrder -> Maybe (Sortable a) -> Int
+ival so = fromIntegral . maybe (if so == SortDesc then maxBound else 0) toKey
 
 prop2Int :: Document a => Property a -> Int
 prop2Int = fromIntegral . fst . unProperty

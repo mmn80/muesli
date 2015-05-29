@@ -2,6 +2,7 @@
 
 * fixed index update bug: new references were added, but the ones from the
 previous version of the document were not removed
+* added sort order argument to range queries
 * `lookup` returns just `Maybe a`
 * renamed `lookupUnique` to `unique'`
 * renamed `filter` to `filterRange`
