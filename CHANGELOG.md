@@ -6,6 +6,7 @@
 * renamed `filter` to `filterRange`
 * added `filter` (just filters, without range)
 * renamed `rangeK` to `range'`
+* added `filterRange'`, `filter'`
 * changed argument order in `range`, `range'`, `filterRange` to resemble SQL
 
 ### 0.1.0.1
