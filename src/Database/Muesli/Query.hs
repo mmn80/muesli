@@ -19,9 +19,9 @@
 -- All queries in this module are run on indexes and perform an
 -- __O(log n)__ worst case operation.
 --
--- Functions whose name ends in \' do the same operation as their counterparts,
--- but return only the keys. As such, they work only on indexes and no I/O is
--- involved. They can be used to implement various kinds of joins not supported
+-- Functions whose name end in \' do the same operation as their counterparts,
+-- but return only the keys, without performing any I/O.
+-- They can be used to implement various kinds of joins not supported
 -- by the primitive operations.
 ----------------------------------------------------------------------------
 
@@ -254,9 +254,9 @@ range' pg p mst msti so = pageK_ (range_ pg p msti so) mst so
 -- @
 filterRange :: (Document a, ToKey (Sortable b), LogState l, MonadIO m)
             => Int                 -- ^ The @page@ below.
-            -> Property a          -- ^ The @sortFld@ and @table@ below.
-            -> Maybe (Reference c) -- ^ The @filterVal@ in the below SQL.
-            -> Property a          -- ^ The @filterFld@ and @table@ below.
+            -> Property a          -- ^ The @filterFld@ (and @table@) below.
+            -> Maybe (Reference c) -- ^ The @filterVal@ below.
+            -> Property a          -- ^ The @sortFld@ (and @table@) below.
             -> Maybe (Sortable b)  -- ^ The @sortVal@ below.
             -> Maybe (Reference a) -- ^ The @sortKey@ below.
             -> SortOrder           -- ^ The @sortOrder@ below.
