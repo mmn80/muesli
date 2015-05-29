@@ -81,10 +81,10 @@ gcThread h = do
       let dataPath = dataDbPath (unHandle h)
       let dataPathNew = dataPath ++ ".new"
       buildDataFile dataPathNew rs2 h
-      let mIdx = updateMainIdx IntMap.empty rs'
-      let uIdx = updateUniquenqIdx  IntMap.empty rs'
-      let iIdx = updateSortIdx IntMap.empty rs'
-      let rIdx = updateRefIdx  IntMap.empty rs'
+      let mIdx = updateMainIndex   IntMap.empty rs'
+      let uIdx = updateUniqueIndex IntMap.empty IntMap.empty rs'
+      let iIdx = updateSortIndex   IntMap.empty IntMap.empty rs'
+      let rIdx = updateFilterIndex IntMap.empty IntMap.empty rs'
       when (forceEval mIdx iIdx rIdx) $ withCommitSgn h $ \kill -> do
         withMaster h $ \nm -> do
           let (ncrs', dpos') = realloc dpos . concat . Map.elems $
@@ -106,10 +106,10 @@ gcThread h = do
                               , gaps      = gs
                               , logPend   = logp'
                               , logComp   = Map.empty
-                              , mainIdx   = updateMainIdx mIdx ncrs
-                              , unqIdx    = updateUniquenqIdx  uIdx ncrs
-                              , sortIdx   = updateSortIdx iIdx ncrs
-                              , refIdx    = updateRefIdx  rIdx ncrs
+                              , mainIdx   = updateMainIndex   mIdx ncrs
+                              , unqIdx    = updateUniqueIndex mIdx uIdx ncrs
+                              , sortIdx   = updateSortIndex   mIdx iIdx ncrs
+                              , refIdx    = updateFilterIndex mIdx rIdx ncrs
                               }
           return (m, ())
         withData h $ \(DataState _ cache) -> do

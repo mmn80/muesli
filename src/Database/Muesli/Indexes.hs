@@ -8,16 +8,18 @@
 -- Stability   : experimental
 -- Portability : portable
 --
--- Incremental database index update functions.
+-- Incremental database index update functions. Except for 'updateMainIndex',
+-- these functions first search for the previous version for each record and,
+-- if found, remove the old references from the index, then add the new ones.
 --
 -- Used during loading, query evaluation, and GC.
 ----------------------------------------------------------------------------
 
 module Database.Muesli.Indexes
-  ( updateMainIdx
-  , updateRefIdx
-  , updateSortIdx
-  , updateUniquenqIdx
+  ( updateMainIndex
+  , updateFilterIndex
+  , updateSortIndex
+  , updateUniqueIndex
   ) where
 
 import qualified Data.IntMap.Strict    as Map
@@ -26,16 +28,24 @@ import           Data.List             (foldl')
 import           Database.Muesli.State
 
 -- | Updates the 'MainIndex' (allocation table).
-updateMainIdx :: MainIndex -> [LogRecord] -> MainIndex
-updateMainIdx = foldl' f
+updateMainIndex :: MainIndex -> [LogRecord] -> MainIndex
+updateMainIndex = foldl' f
   where f idx r = let did = fromIntegral (recDocumentKey r) in
                   let rs' = maybe [r] (r:) (Map.lookup did idx) in
                   Map.insert did rs' idx
 
+getPreviousVersion :: MainIndex -> LogRecord -> Maybe LogRecord
+getPreviousVersion idx r =
+  let did = fromIntegral (recDocumentKey r) in
+  maybe Nothing (\ors -> if null ors then Nothing
+                         else Just (head ors) { recDeleted = True })
+  (Map.lookup did idx)
+
 -- | Updates the 'UniqueIndex'.
-updateUniquenqIdx :: UniqueIndex -> [LogRecord] -> UniqueIndex
-updateUniquenqIdx = foldl' f
-  where f idx r = foldl' g idx (recUniques r)
+updateUniqueIndex :: MainIndex -> UniqueIndex -> [LogRecord] -> UniqueIndex
+updateUniqueIndex mIdx = foldl' h
+  where h idx r = f (maybe idx (f idx) (getPreviousVersion mIdx r)) r
+        f idx r = foldl' g idx (recUniques r)
           where
             did = fromIntegral (recDocumentKey r)
             del = recDeleted r
@@ -50,9 +60,10 @@ updateUniquenqIdx = foldl' f
                               else Map.insert rval did is
 
 -- | Updates the main 'SortIndex', and also the 'SortIndex'es inside a 'FilterIndex'.
-updateSortIdx :: SortIndex -> [LogRecord] -> SortIndex
-updateSortIdx = foldl' f
-  where f idx r = foldl' g idx (recSortables r)
+updateSortIndex :: MainIndex -> SortIndex -> [LogRecord] -> SortIndex
+updateSortIndex mIdx = foldl' h
+  where h idx r = f (maybe idx (f idx) (getPreviousVersion mIdx r)) r
+        f idx r = foldl' g idx (recSortables r)
           where
             did = fromIntegral (recDocumentKey r)
             del = recDeleted r
@@ -74,16 +85,17 @@ updateSortIdx = foldl' f
 
 -- | Updates the 'FilterIndex'.
 --
--- Calls 'updateSortIdx' for the internal sorted indexes.
-updateRefIdx :: FilterIndex -> [LogRecord] -> FilterIndex
-updateRefIdx = foldl' f
-  where f idx r = foldl' g idx (recReferences r)
+-- Calls 'updateSortIndex' for the internal sorted indexes.
+updateFilterIndex :: MainIndex -> FilterIndex -> [LogRecord] -> FilterIndex
+updateFilterIndex mIdx = foldl' h
+  where h idx r = f (maybe idx (f idx) (getPreviousVersion mIdx r)) r
+        f idx r = foldl' g idx (recReferences r)
           where
             del = recDeleted r
             g idx' lnk =
               let rpid = fromIntegral (fst lnk) in
               let rval = fromIntegral (snd lnk) in
-              let sng = updateSortIdx Map.empty [r] in
+              let sng = updateSortIndex mIdx Map.empty [r] in
               case Map.lookup rpid idx' of
                 Nothing -> if del then idx'
                            else Map.insert rpid (Map.singleton rval sng) idx'
@@ -92,4 +104,4 @@ updateRefIdx = foldl' f
                                 Nothing -> if del then is
                                            else Map.insert rval sng is
                                 Just ss -> Map.insert rval ss' is
-                                  where ss' = updateSortIdx ss [r]
+                                  where ss' = updateSortIndex mIdx ss [r]

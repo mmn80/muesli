@@ -14,6 +14,9 @@
 -- Portability : portable
 --
 -- Binary seekable file backend that uses 'Prelude' functions.
+--
+-- Only one process at a time can safely use the files, but file locking is not
+-- yet implemented.
 ----------------------------------------------------------------------------
 
 module Database.Muesli.Backend.File

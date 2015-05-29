@@ -1,17 +1,19 @@
 ### 0.1.1.0
 
+* fixed index update bug: new references were added, but the ones from the
+previous version of the document were not removed
 * `lookup` returns just `Maybe a`
 * renamed `lookupUnique` to `unique'`
-* added `unique` (that does something like `unique'` >>= 'lookup')
 * renamed `filter` to `filterRange`
-* added `filter` (just filters, without range)
 * renamed `rangeK` to `range'`
+* changed argument order in `range`, `range'`, `filterRange` to match SQL
+* added `unique`
+* added `filter`
 * added `filterRange'`, `filter'`
-* changed argument order in `range`, `range'`, `filterRange` to resemble SQL
 
 ### 0.1.0.1
 
-* fixed a GC bug
+* fixed a GC bug: `swapDb` failed to swap
 
 ### 0.1
 

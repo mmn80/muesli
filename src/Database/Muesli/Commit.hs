@@ -187,8 +187,8 @@ runQuery h (Transaction t) = do
 --
 -- It periodically checks for new records in the 'logPend', and processes them,
 -- by adding a 'Completed' record to the log file with 'logAppend', and
--- updating indexes with 'updateMainIdx', 'updateRefIdx', 'updateSortIdx' and
--- 'updateUniquenqIdx', after writing (without master lock) the serialized documents
+-- updating indexes with 'updateMainIndex', 'updateFilterIndex', 'updateSortIndex' and
+-- 'updateUniqueIndex', after writing (without master lock) the serialized documents
 -- in the data file with 'writeDocument'.
 -- It also moves the records from 'logPend' to 'logComp'.
 commitThread :: LogState l => Handle l -> Bool -> IO ()
@@ -214,10 +214,10 @@ commitThread h w = do
           let m' = m { logState = st
                      , logPend  = lgp
                      , logComp  = lgc
-                     , mainIdx  = updateMainIdx (mainIdx m) rs'
-                     , unqIdx   = updateUniquenqIdx  (unqIdx  m) rs'
-                     , sortIdx  = updateSortIdx (sortIdx m) rs'
-                     , refIdx   = updateRefIdx  (refIdx  m) rs'
+                     , mainIdx  = updateMainIndex   (mainIdx m) rs'
+                     , unqIdx   = updateUniqueIndex (mainIdx m) (unqIdx  m) rs'
+                     , sortIdx  = updateSortIndex   (mainIdx m) (sortIdx m) rs'
+                     , refIdx   = updateFilterIndex (mainIdx m) (refIdx  m) rs'
                      }
           return (m', null lgp))
     return (kill, (kill, wait))

@@ -17,11 +17,10 @@ Features
 (see example below).
 * **minimal boilerplate**: instead of *TemplateHaskell* we use
 [`GHC.Generics`][gen] and [`deriving`][der].
-* **simple monad for writing queries**, with standard primitive operations like:
-`lookup`, `insert`, `update`, `delete`, `range`, `filter`.
-* range queries (`filter` and `range`) afford efficient **cursor-like
-navigation** (paging) through large datasets. For example this is the
-equivalent SQL for `filterRange`:
+* **monadic queries**, with standard primitive operations like:
+`lookup`, `insert`, `update`, `delete`, `filter`, `range`, and `filterRange`.
+* range queries afford efficient **cursor-like navigation** (paging) through
+large datasets. For example this is the equivalent SQL for `filterRange`:
 ```SQL
 SELECT TOP page * FROM table
 WHERE (filterFld = filterVal) AND
@@ -29,7 +28,7 @@ WHERE (filterFld = filterVal) AND
       (sortKey = NULL OR ID < sortKey)
 ORDER BY sortFld, ID DESC
 ```
-* **easy to reason about performance**: all primitive queries run in **O(log n)**.
+* **easy to reason about performance**: all primitive queries run in **O(p*log(n))**.
 * **type safety**: impossible to attempt deserializing a record at a wrong type
 (or address), and risk getting bogus data with no error thrown.
 References are tagged with a phantom type and created only by the database.
@@ -38,10 +37,18 @@ but normally those are not needed.
 * **multiple backends** supported: currently *file*, and soon (:tm:)
 *in-memory*, *remote*.
 * **portability**: it should work on all platforms, including mobile.
-* **replication**: soon (:tm:)
+* p2p **replication**: soon (:tm:)
 
-*Note: some of these features become misfeatures for certain scenarios which
+*Note: Some of these features become misfeatures for certain scenarios which
 would make either a pure in-memory cache, or a real database more appropriate.*
+
+*In particular the query language is very basic at the current stage. Sure, you
+can use the customary `Functor` / `Applicative` / `Monad` interface, but you will
+have to write all kinds of wrapper queries to make things manageable.*
+
+*The design principle is to only upgrade the query language in tandem with the indexes.
+Right now the indexes are not very smart, so the query language will not lie
+about it with some nice but poorly implemented abstraction.*
 
 Example use
 -----------
@@ -143,8 +150,8 @@ TODO
 live up to the "document-oriented" label, but this should be optional
 - [ ] better migration story
 - [ ] radix tree / PATRICIA implementation for proper full-text search
-(currently indexing strings just takes first 4/8 chars and turnes them into an int,
-which is good enough for simple sorting)
+(currently indexing strings just takes first 4/8 chars and turns them into an int,
+which is good enough for basic sorting)
 - [ ] replication
 - [ ] more advanced & flexible index system supporting complex indexes, joins, etc.
 - [ ] fancy query language
@@ -163,7 +170,7 @@ less memory then *acid-state*, which serializes entire records, including
 potentially very large string fields, typical in "document-oriented" scenarios.
 It was suggested that in such cases you should store this data in external files.
 But then, if you want to regain the ACID property, and already have some indexes
-laying aroung, you are well on your way of creating *muesli*.
+laying around, you are well on your way of creating *muesli*.
 * data file only contains serialized records and gaps, no metadata
 * LRU cache holds deserialized objects wrapped in `Data.Dynamic`.
 On SSDs deserialization is far more costly than file IO,

@@ -125,10 +125,10 @@ readLog m = do
                        shows tid " found for nonexisting transaction."
           Just rps -> let rs = fst <$> rps in
                       m { logPend  = Map.delete tid logp
-                        , mainIdx  = updateMainIdx (mainIdx m) rs
-                        , unqIdx   = updateUniquenqIdx  (unqIdx  m) rs
-                        , sortIdx  = updateSortIdx (sortIdx m) rs
-                        , refIdx   = updateRefIdx  (refIdx  m) rs
+                        , mainIdx  = updateMainIndex   (mainIdx m) rs
+                        , unqIdx   = updateUniqueIndex (mainIdx m) (unqIdx  m) rs
+                        , sortIdx  = updateSortIndex   (mainIdx m) (sortIdx m) rs
+                        , refIdx   = updateFilterIndex (mainIdx m) (refIdx  m) rs
                         }
 
 -- | Sends a message to the 'Database.Muesli.GC.gcThread' requesting GC.
