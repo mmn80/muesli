@@ -109,7 +109,7 @@ flagContributor :: Reference Person -> Transaction l m ()
 flagContributor pid = do
   is <- postsByContributor pid
   forM_ is $ \(bpid, bp) ->
-    update bpid bp { postTags = postTags bp ++ Sortable "stolen" }
+    update bpid bp { postTags = postTags bp ++ [ Sortable "stolen" ] }
 ```
 
 Then you can run these transactions with `runQuery` inside some `MonadIO` context.
