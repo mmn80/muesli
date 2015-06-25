@@ -98,8 +98,8 @@ open lf df mbc mbcd = do
                          , commitSgn   = um
                          , gcState     = gc
                          }
-  liftIO . forkIO $ commitThread h True
-  liftIO . forkIO $ gcThread h
+  _ <- liftIO . forkIO $ commitThread h True
+  _ <- liftIO . forkIO $ gcThread h
   return h
 
 readLog :: (MonadIO m, LogState l) => MasterState l -> m (MasterState l)
