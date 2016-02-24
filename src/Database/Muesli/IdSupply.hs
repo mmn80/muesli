@@ -5,10 +5,10 @@
 -----------------------------------------------------------------------------
 -- |
 -- Module      : Database.Muesli.IdSupply
--- Copyright   : (c) 2015 Călin Ardelean
+-- Copyright   : (c) 2015-16 Călin Ardelean
 -- License     : MIT
 --
--- Maintainer  : Călin Ardelean <calinucs@gmail.com>
+-- Maintainer  : Călin Ardelean <mmn80cpu@gmail.com>
 -- Stability   : experimental
 -- Portability : portable
 --

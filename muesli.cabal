@@ -14,11 +14,11 @@ description:
   The rest of the modules are internal, but exposed just in case.
   .
   See the README.md file for an usage example.
-homepage:            https://github.com/clnx/muesli
-bug-reports:         https://github.com/clnx/muesli/issues
+homepage:            https://github.com/mmn80/muesli
+bug-reports:         https://github.com/mmn80/muesli/issues
 author:              Călin Ardelean
-maintainer:          Călin Ardelean <calinucs@gmail.com>
-copyright:           Copyright (c) 2015 Călin Ardelean
+maintainer:          Călin Ardelean <mmn80cpu@gmail.com>
+copyright:           Copyright (c) 2015-16 Călin Ardelean
 license:             MIT
 license-file:        LICENSE.md
 stability:           experimental
@@ -30,7 +30,7 @@ extra-source-files:
 
 source-repository head
   type:     git
-  location: https://github.com/clnx/muesli.git
+  location: https://github.com/mmn80/muesli.git
 
 library
   ghc-options:       -O2 -Wall

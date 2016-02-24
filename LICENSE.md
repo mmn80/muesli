@@ -1,4 +1,4 @@
-Copyright (c) 2015 Călin Ardelean
+Copyright (c) 2015-16 Călin Ardelean
 
 Permission is hereby granted, free of charge, to any person obtaining
 a copy of this software and associated documentation files (the

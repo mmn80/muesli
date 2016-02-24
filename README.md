@@ -200,5 +200,5 @@ MIT license. See the [license file][MIT] for details.
 [gen]: https://downloads.haskell.org/~ghc/latest/docs/html/users_guide/generic-programming.html "Generic Programming - GHC User's Guide"
 [der]: https://downloads.haskell.org/~ghc/latest/docs/html/users_guide/deriving.html "Extensions to the deriving mechanism - GHC User's Guide"
 [orf]: https://ghc.haskell.org/trac/ghc/wiki/Records/OverloadedRecordFields "Overloaded Record Fields - GHC Wiki"
-[changes]: https://github.com/clnx/muesli/blob/master/CHANGELOG.md "Muesli change log"
-[MIT]: https://github.com/clnx/muesli/blob/master/LICENSE.md "MIT License File"
+[changes]: https://github.com/mmn80/muesli/blob/master/CHANGELOG.md "Muesli change log"
+[MIT]: https://github.com/mmn80/muesli/blob/master/LICENSE.md "MIT License File"
