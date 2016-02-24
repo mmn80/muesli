@@ -1,6 +1,8 @@
 muesli
 ======
 
+[![Build Status](https://travis-ci.org/mmn80/muesli.png)](https://travis-ci.org/mmn80/muesli)
+
 A simple [document-oriented database][nosql] engine for Haskell.
 
 Use cases
