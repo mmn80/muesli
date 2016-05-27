@@ -7,10 +7,13 @@ addons:
     packages:
     - libgmp-dev
 
-env:
-- ARGS="--resolver lts-3"
-- ARGS="--resolver lts-5"
-- ARGS="--resolver nightly"
+matrix:
+  include:
+  - env: ARGS="--resolver lts-3"
+  - env: ARGS="--resolver lts-6"
+  - env: ARGS="--resolver nightly"
+  allow_failures:
+  - env: ARGS="--resolver nightly"
 
 before_install:
 - mkdir -p ~/.local/bin
