@@ -10,7 +10,7 @@ addons:
 matrix:
   include:
   - env: ARGS="--resolver lts-3"
-  - env: ARGS="--resolver lts-6"
+  - env: ARGS="--resolver lts-7"
   - env: ARGS="--resolver nightly"
   allow_failures:
   - env: ARGS="--resolver nightly"
