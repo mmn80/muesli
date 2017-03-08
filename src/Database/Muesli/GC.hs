@@ -75,7 +75,7 @@ gcThread h = do
                 map fromPending $ filter isPending ts
       let logPath = logDbPath (unHandle h)
       let logPathNew = logPath ++ ".new"
-      withDb logPathNew $ \hnd -> do
+      _ <- withDb logPathNew $ \hnd -> do
         st <- logInit hnd
         logAppend (st :: l) ts
       let dataPath = dataDbPath (unHandle h)
@@ -93,7 +93,7 @@ gcThread h = do
           let ncrs = fst <$> ncrs'
           unless (null ncrs) . withDb logPathNew $ \hnd -> do
             st <- logInit hnd
-            logAppend (st :: l) (toTransRecord ncrs)
+            _ <- logAppend (st :: l) (toTransRecord ncrs)
             return ()
           st <- swapDb logPath logPathNew >>= logInit
           buildDataFile dataPathNew ncrs' h
@@ -128,6 +128,7 @@ isPending (Completed _) = False
 
 fromPending :: TransRecord -> LogRecord
 fromPending (Pending r) = r
+fromPending _ = error "fromPending: the impossible happened."
 
 toTransRecord :: [LogRecord] -> [TransRecord]
 toTransRecord rs = foldl' (\ts r -> Pending r : ts)

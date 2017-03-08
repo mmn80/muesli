@@ -77,3 +77,4 @@ alloc gs sz =
       where gs' = if null as then Map.delete gsz gs
                              else Map.insert gsz as gs
             delta = gsz - sz
+    _ -> error "alloc: the impossible happened."
