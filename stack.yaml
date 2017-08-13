@@ -2,6 +2,6 @@ flags: {}
 packages:
 - '.'
 extra-deps: []
-resolver: lts-8.6
+resolver: lts-9.0
 nix:
   packages: [ binutils ]
