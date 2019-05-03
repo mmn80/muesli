@@ -5,6 +5,8 @@ muesli
 
 A simple [document-oriented database][nosql] engine for Haskell.
 
+_Note: This is a hobby project, for more info about its goals & status please read [this thread](https://github.com/mmn80/muesli/issues/1)._
+
 Use cases
 ---------
 * backing store for p2p / cloud nodes, mobile apps, etc.
